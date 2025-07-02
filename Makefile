@@ -48,6 +48,23 @@ $(curdir)/x86-64:
 		--lg-env $(TESTSDIR)/targets/qemu-x86-64.yaml \
 		--firmware $(FIRMWARE:.gz=)
 
+$(curdir)/x86-64-libremesh: QEMU_BIN ?= qemu-system-x86_64
+$(curdir)/x86-64-libremesh: FIRMWARE ?= $(TOPDIR)/bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined.img.gz
+$(curdir)/x86-64-libremesh:
+
+	[ -f $(FIRMWARE) ]
+
+	gzip \
+		--force \
+		--keep \
+		--decompress \
+		$(FIRMWARE) || true
+
+	LG_QEMU_BIN=$(QEMU_BIN) \
+		$(pytest) \
+		--lg-env $(TESTSDIR)/targets/qemu-libremesh-x86-64.yaml \
+		--firmware $(FIRMWARE:.gz=)
+
 $(curdir)/armsr-armv8: QEMU_BIN ?= qemu-system-aarch64
 $(curdir)/armsr-armv8: FIRMWARE ?= $(TOPDIR)/bin/targets/armsr/armv8/openwrt-armsr-armv8-generic-initramfs-kernel.bin
 $(curdir)/armsr-armv8:
