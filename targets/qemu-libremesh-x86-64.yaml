@@ -1,6 +1,6 @@
 targets:
   main:
-    features: [hwsim]
+    features: [hwsim, libremesh]
     resources:
       - NetworkService:
           # The actual address will be filled in by the strategy
