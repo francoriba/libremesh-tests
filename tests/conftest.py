@@ -159,3 +159,26 @@ def upload_vwifi(shell_command,target):
     assert "02:00:00:00:00:02" in stations                                                    
     assert "02:00:00:00:00:03" in stations 
     return ssh
+
+@pytest.fixture
+def shell_command_fast(strategy):
+    try:
+        strategy.transition("shell")
+        return strategy.shell
+    except Exception:
+        logger.exception("Failed to transition to state shell")
+        pytest.exit("Failed to transition to state shell", returncode=3)
+
+
+@pytest.fixture
+def shell_command_force_cycle(strategy):
+    try:
+        if hasattr(strategy, 'force_power_cycle'):
+            strategy.force_power_cycle()
+        else:
+            strategy.transition("shell")
+        return strategy.shell
+    except Exception:
+        logger.exception("Failed to transition to state shell")
+        pytest.exit("Failed to transition to state shell", returncode=3)
+
