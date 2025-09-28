@@ -18,6 +18,7 @@ import shlex
 import re
 import subprocess
 import logging
+import os
 from os import getenv, path
 from pathlib import Path
 
@@ -169,7 +170,6 @@ def shell_command_fast(strategy):
         logger.exception("Failed to transition to state shell")
         pytest.exit("Failed to transition to state shell", returncode=3)
 
-
 @pytest.fixture
 def shell_command_force_cycle(strategy):
     try:
@@ -182,3 +182,62 @@ def shell_command_force_cycle(strategy):
         logger.exception("Failed to transition to state shell")
         pytest.exit("Failed to transition to state shell", returncode=3)
 
+# Fixture que apaga los routers al final (con env directo)
+@pytest.fixture(scope="session", autouse=True)
+def auto_router_lifecycle(env):
+    """Apaga todos los targets del env al finalizar cada test (salvo KEEP_DUT_ON=1)."""
+    yield
+
+    if os.getenv("KEEP_DUT_ON", "0") == "1":
+        logger.info("KEEP_DUT_ON=1, skipping power off for all targets")
+        return
+
+    for name, target in getattr(env, "targets", {}).items():
+        try:
+            # Prefer Strategy (aplica quirks); fallback a driver
+            try:
+                strat = target.get_driver("PhysicalDeviceStrategy")
+                strat.transition("off")
+                logger.info(f"[teardown] OFF via strategy: {name}")
+            except Exception:
+                power = target.get_driver("ExternalPowerDriver")
+                target.activate(power)
+                power.off()
+                logger.info(f"[teardown] OFF via ExternalPowerDriver: {name}")
+        except Exception as e:
+            logger.warning(f"[teardown] Could not power off {name}: {e}")
+
+
+@pytest.fixture
+def belkin1_shell(env):
+    """Shell del Belkin RT3200 #1."""
+    target = env.get_target("belkin_rt3200_1")
+    strategy = target.get_driver("PhysicalDeviceStrategy")
+    strategy.transition("shell")
+    return strategy.shell
+
+
+@pytest.fixture
+def belkin2_shell(env):
+    """Shell del Belkin RT3200 #2."""
+    target = env.get_target("belkin_rt3200_2")
+    strategy = target.get_driver("PhysicalDeviceStrategy")
+    strategy.transition("shell")
+    return strategy.shell
+
+@pytest.fixture
+def glinet_shell(env):
+    """Shell del GL-iNet MT300N-V2."""
+    target = env.get_target("gl-mt300n-v2")
+    strategy = target.get_driver("PhysicalDeviceStrategy")
+    strategy.transition("shell")
+    return strategy.shell
+
+
+@pytest.fixture
+def mesh_routers(belkin1_shell, belkin2_shell):
+    """Fixture para tests que requieren múltiples routers."""
+    return {
+        "belkin1": belkin1_shell,
+        "belkin2": belkin2_shell
+    }
