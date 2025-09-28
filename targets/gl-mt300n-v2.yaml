@@ -1,0 +1,51 @@
+targets:
+  main:
+    features:
+      - power
+
+    resources:
+      RawSerialPort:
+        port: "/dev/glinet-mango"
+        speed: 115200
+      
+#      SerialIsolatorResource:
+#        device: "/dev/arduino-relay"
+#        channel: 1
+#        baudrate: 115200
+
+      NetworkService:
+        address: "192.168.20.188"
+        username: "root"
+
+    drivers:
+      ExternalPowerDriver:
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0 1"
+
+      #SerialIsolatorDriver: {}
+
+      SerialDriver:
+        txdelay: 0.05
+
+      ShellDriver:
+        prompt: 'root@[\w\-.]+:[/\w\-.~]+# '
+        login_prompt: '(?:GL-MT300N-V2|OpenWrt).* login: '
+        await_login_timeout: 15
+        login_timeout: 120
+        post_login_settle_time: 5
+        username: root
+        password: bestpi4ever
+
+      SSHDriver:
+        connection_timeout: 30.0
+        explicit_scp_mode: True
+
+      PhysicalDeviceStrategy:
+        requires_serial_disconnect: true
+        boot_wait: 60
+        connection_timeout: 60
+        smart_state_detection: true
+        fast_check_timeout: 3
+
+imports:
+  - ../strategies/physicalstrategy.py
