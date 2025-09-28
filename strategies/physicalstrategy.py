@@ -6,12 +6,10 @@ from labgrid import target_factory
 from labgrid.step import step
 from labgrid.strategy import Strategy, StrategyError
 
-
 class Status(enum.Enum):
     unknown = 0
     off = 1
     shell = 2
-
 
 @target_factory.reg_driver
 @attr.s(eq=False)
@@ -34,10 +32,10 @@ class PhysicalDeviceStrategy(Strategy):
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
         # Serial isolator (si existe)
-        # try:
-        #     self.serial_isolator = self.target.get_driver("SerialIsolatorDriver")
-        # except Exception:
-        #     self.serial_isolator = None
+        try:
+            self.serial_isolator = self.target.get_driver("SerialIsolatorDriver")
+        except Exception:
+            self.serial_isolator = None
         try: # SerialDriver (para "activar" consola con Enter)
             self.serial = self.target.get_driver("SerialDriver")
         except Exception:
@@ -118,13 +116,13 @@ class PhysicalDeviceStrategy(Strategy):
 
             if self.requires_serial_disconnect: #and self.serial_isolator:
                 # Secuencia especial GL-iNet
-                #self.target.activate(self.serial_isolator)
+                self.target.activate(self.serial_isolator)
                 self.power.off()
-                #self.serial_isolator.disconnect()
+                self.serial_isolator.disconnect()
                 sleep(3)
                 self.power.on()
                 sleep(self.boot_wait)
-                #self.serial_isolator.connect()
+                self.serial_isolator.connect()
                 sleep(8)
             else:
                 # Arranque estándar

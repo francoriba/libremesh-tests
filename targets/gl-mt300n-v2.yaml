@@ -8,10 +8,10 @@ targets:
         port: "/dev/glinet-mango"
         speed: 115200
       
-#      SerialIsolatorResource:
-#        device: "/dev/arduino-relay"
-#        channel: 1
-#        baudrate: 115200
+      SerialIsolatorResource:
+        device: "/dev/arduino-relay"
+        channel: 1
+        baudrate: 115200
 
       NetworkService:
         address: "192.168.20.188"
@@ -19,10 +19,10 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0 1"
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
 
-      #SerialIsolatorDriver: {}
+      SerialIsolatorDriver: {}
 
       SerialDriver:
         txdelay: 0.05
@@ -49,3 +49,4 @@ targets:
 
 imports:
   - ../strategies/physicalstrategy.py
+  - ../drivers/serial_isolator_driver.py

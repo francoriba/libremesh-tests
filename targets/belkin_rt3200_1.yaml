@@ -14,8 +14,8 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 2"
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 2"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
 
       SerialDriver:
         txdelay: 0.05
