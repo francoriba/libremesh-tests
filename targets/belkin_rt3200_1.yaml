@@ -1,0 +1,43 @@
+targets:
+  main:
+    features:
+      - power
+
+    resources:
+      RawSerialPort:
+        port: "/dev/belkin-rt3200-1"
+        speed: 115200
+
+      NetworkService:
+        address: "192.168.20.183"
+        username: "root"
+
+    drivers:
+      ExternalPowerDriver:
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 2"
+
+      SerialDriver:
+        txdelay: 0.05
+
+      ShellDriver:
+        prompt: '[\r\n]+.*?root@.*?#\s*'
+        login_prompt: 'Please press Enter to activate this console\.'
+        username: 'root'
+        await_login_timeout: 15
+        login_timeout: 120
+        post_login_settle_time: 5
+
+      SSHDriver:
+        connection_timeout: 30.0
+        explicit_scp_mode: True
+
+      PhysicalDeviceStrategy:
+        requires_serial_disconnect: false
+        boot_wait: 30
+        connection_timeout: 30
+        smart_state_detection: true
+        fast_check_timeout: 3
+
+imports:
+  - ../strategies/physicalstrategy.py
