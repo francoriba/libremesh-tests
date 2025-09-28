@@ -1,10 +1,13 @@
 import enum
-from time import sleep, time
+from time import sleep, time as _time_mod
 import attr
 import allure
+import logging as _logging
 from labgrid import target_factory
 from labgrid.step import step
 from labgrid.strategy import Strategy, StrategyError
+
+logger = _logging.getLogger(__name__)
 
 class Status(enum.Enum):
     unknown = 0
@@ -15,9 +18,9 @@ class Status(enum.Enum):
 @attr.s(eq=False)
 class PhysicalDeviceStrategy(Strategy):
     bindings = {
-        "power": "ExternalPowerDriver", # Esto le dice a Labgrid: "Cuando alguien acceda a self.power, dame una instancia del ExternalPowerDriver"
+        "power": "ExternalPowerDriver",  # Cuando alguien acceda a self.power, dame ExternalPowerDriver
         "shell": "ShellDriver",
-        # "ssh": "SSHDriver",  # opcional: comentar si no se usa
+        # "ssh": "SSHDriver",  # opcional
     }
 
     # Configuración de quirks
@@ -36,7 +39,7 @@ class PhysicalDeviceStrategy(Strategy):
             self.serial_isolator = self.target.get_driver("SerialIsolatorDriver")
         except Exception:
             self.serial_isolator = None
-        try: # SerialDriver (para "activar" consola con Enter)
+        try:  # SerialDriver (para "activar" consola con Enter)
             self.serial = self.target.get_driver("SerialDriver")
         except Exception:
             self.serial = None
@@ -48,29 +51,19 @@ class PhysicalDeviceStrategy(Strategy):
             return False
 
         try:
-            # VERIFICACIÓN RÁPIDA SIN ACTIVAR SHELL
-            # Solo verificamos si el SerialDriver puede leer algo inmediatamente
             if not hasattr(self.target, 'get_driver'):
                 return False
             try:
                 serial_driver = self.target.get_driver("SerialDriver")
-            except:
+            except Exception:
                 return False
 
-            # Verificación súper rápida: enviar comando y leer con timeout mínimo
             try:
                 serial_driver.sendline("echo test_active")
-                # Timeout de solo 2 segundos
                 result = serial_driver.expect(["test_active", "login:", "#"], timeout=2)
-
-                # Si recibimos cualquier respuesta válida, el router está activo
-                if result[0] in [0, 2]:  # test_active o prompt
-                    return True
-                else:
-                    return False
-
+                # test_active o prompt
+                return result[0] in (0, 2)
             except Exception:
-                # Si hay timeout o error, router está apagado/no responde
                 return False
 
         except Exception:
@@ -80,11 +73,9 @@ class PhysicalDeviceStrategy(Strategy):
     def _ensure_shell_ready_fast(self):
         """Verificación rápida de que el shell sigue funcionando correctamente."""
         try:
-            # Comando de verificación más completo
             result = self.shell.run("uname && echo ready", timeout=5)
             if result[2] == 0 and result[0] and len(result[0]) >= 2:
-                if "Linux" in result[0][0] and "ready" in result[0][1]:
-                    return True
+                return ("Linux" in result[0][0]) and ("ready" in result[0][1])
             return False
         except Exception:
             return False
@@ -105,16 +96,16 @@ class PhysicalDeviceStrategy(Strategy):
             self.power.off()
 
         elif state == Status.shell:
-            # Verificación simple: ¿ya está activo?
+            # ¿ya está activo?
             if self._check_shell_active():
                 step.skip("shell already active and ready")
                 self.status = Status.shell
                 return
 
-            # Si llegamos aquí, hacer power cycle completo
+            # Power on / cycle
             self.target.activate(self.power)
 
-            if self.requires_serial_disconnect: #and self.serial_isolator:
+            if self.requires_serial_disconnect and self.serial_isolator:
                 # Secuencia especial GL-iNet
                 self.target.activate(self.serial_isolator)
                 self.power.off()
@@ -140,9 +131,8 @@ class PhysicalDeviceStrategy(Strategy):
         if not self.serial:
             return
         try:
-            # En algunos getty hace falta apretar Enter más de una vez
             for _ in range(2):
-                self.serial.sendline("")  # equivale a '\n'
+                self.serial.sendline("")  # '\n'
                 sleep(0.1)
         except Exception as e:
             allure.attach(str(e), "poke-console-error", allure.attachment_type.TEXT)
@@ -150,11 +140,9 @@ class PhysicalDeviceStrategy(Strategy):
     @step()
     def _wait_for_shell_ready(self):
         """Espera activamente a que el shell esté listo con timeout robusto."""
-
-        # 1) ACTIVAR SERIAL Y DESPERTAR CONSOLA ANTES DE SHELL
+        # 1) Despertar consola en serial
         if self.serial:
             self.target.activate(self.serial)
-            # Enviar varios Enter para salir de "Please press Enter to activate this console."
             for _ in range(6):
                 try:
                     self.serial.sendline("")
@@ -162,16 +150,15 @@ class PhysicalDeviceStrategy(Strategy):
                     pass
                 sleep(0.2)
 
-        # 2) Ahora sí, activar el shell (ya no debería bloquearse)
+        # 2) Activar shell
         self.target.activate(self.shell)
 
-        start_time = time()
+        start_time = _time_mod()
         last_error = None
 
-        # Primer poke adicional por si acaso
         self._poke_console()
 
-        while time() - start_time < self.connection_timeout:
+        while _time_mod() - start_time < self.connection_timeout:
             try:
                 result = self.shell.run("echo 'ready'", timeout=5)
                 if result[2] == 0 and result[0] and "ready" in result[0][0]:
@@ -198,3 +185,46 @@ class PhysicalDeviceStrategy(Strategy):
             self.transition("shell")
         finally:
             self.smart_state_detection = original_smart
+
+    @step()
+    def ensure_off(self):
+        """Asegura que el dispositivo esté apagado."""
+        if self.status != Status.off:
+            self.transition("off")
+        logger.info(f"Device is now off (status: {self.status})")
+
+    @step()
+    def cleanup_and_shutdown(self):
+        """Limpieza completa y apagado seguro con verificación inteligente."""
+        try:
+            if self.status == Status.shell:
+                try:
+                    ssh = self.target.get_driver("SSHDriver")
+                    logger.info("Attempting clean shutdown via SSH")
+                    ssh.run("poweroff", timeout=10)
+
+                    # intentar detectar caída de SSH por un breve período
+                    max_wait = 15
+                    check_interval = 2
+                    waited = 0
+                    while waited < max_wait:
+                        try:
+                            result = ssh.run("true", timeout=3)
+                            if result[2] != 0:
+                                break
+                        except Exception:
+                            logger.info(f"SSH stopped responding after {waited}s - clean shutdown likely completed")
+                            break
+                        sleep(check_interval)
+                        waited += check_interval
+
+                    if waited >= max_wait:
+                        logger.warning("SSH still responding after max wait time, forcing physical shutdown")
+                    else:
+                        logger.info("Clean shutdown via SSH completed")
+
+                except Exception as e:
+                    logger.warning(f"SSH shutdown failed: {e}, using physical power off")
+        finally:
+            self.ensure_off()
+            logger.info("Physical power off completed")
