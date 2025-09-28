@@ -84,3 +84,11 @@ $(curdir)/malta-be:
 		$(pytest) \
 		--lg-env $(TESTSDIR)/targets/qemu-malta-be.yaml \
 		--firmware $(FIRMWARE)
+
+$(curdir)/gl-mt300n-v2:
+	@echo "Running tests on physical GL-MT300N-V2 device..."
+	@echo "Make sure the device is connected via serial and Arduino relay"
+	$(pytest) \
+		--lg-env $(TESTSDIR)/targets/gl-mt300n-v2.yaml \
+		--lg-log \
+		--log-cli-level=DEBUG
