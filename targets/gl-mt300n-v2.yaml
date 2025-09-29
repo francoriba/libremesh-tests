@@ -14,8 +14,9 @@ targets:
         baudrate: 115200
 
       NetworkService:
-        address: "192.168.20.188"
+        address: "192.168.20.181"
         username: "root"
+        password: "bestpi4ever"
 
     drivers:
       ExternalPowerDriver:
