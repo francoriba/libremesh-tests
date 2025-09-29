@@ -19,3 +19,20 @@ dev = [
     "isort>=6.0.1",
     "ruff>=0.12.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "lg_feature: labgrid feature tests",
+    "lg_system: system-level integration tests", 
+    "lg_smoke: smoke tests for basic functionality",
+    "lg_hardware: hardware-specific tests",
+    "lg_fast: tests that can use optimized shell connection",
+    "lg_force_cycle: tests that require full power cycle",
+    "lg_isolation_full: tests requiring complete state isolation",
+    "lg_isolation_minimal: tests that can reuse session state",
+    "lg_routers: specify required router targets for the test",
+    "lg_mesh: tests requiring multiple routers for mesh functionality",
+    "lg_keep_routers_on: keep specified routers on after test (debugging)",
+    "lg_single_router: tests that run on a single router",
+    "lg_multi_router: tests that coordinate multiple routers",
+]
