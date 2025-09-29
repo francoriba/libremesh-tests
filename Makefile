@@ -12,6 +12,9 @@ test: $(OPENWRT_CI_TESTS)
 TESTSDIR ?= $(shell readlink -f $(TOPDIR)/tests)
 
 define pytest
+	KEEP_DUT_ON=$(KEEP_DUT_ON) \
+	RESET_ALL_DUTS=$(RESET_ALL_DUTS) \
+	SUITE_OPTIMIZATION=$(SUITE_OPTIMIZATION) \
 	uv --project $(TESTSDIR) run \
 		pytest $(TESTSDIR)/tests/ \
 		--lg-log \
@@ -106,5 +109,16 @@ $(curdir)/belkin_rt3200_2:
 	@echo "Make sure the device is connected via serial and Arduino relay (channel 3)"
 	$(pytest) \
 		--lg-env $(TESTSDIR)/targets/belkin_rt3200_2.yaml \
+		--lg-log \
+		--log-cli-level=DEBUG
+
+$(curdir)/mesh_belkin_pair:
+	@echo "Running mesh tests on Belkin RT3200 pair..."
+	@echo "Make sure both devices are connected via serial and Arduino relay"
+	KEEP_DUT_ON=$(KEEP_DUT_ON) \
+	RESET_ALL_DUTS=$(RESET_ALL_DUTS) \
+	SUITE_OPTIMIZATION=$(SUITE_OPTIMIZATION) \
+	$(pytest) \
+		--lg-env $(TESTSDIR)/targets/mesh_belkin_pair.yaml \
 		--lg-log \
 		--log-cli-level=DEBUG
