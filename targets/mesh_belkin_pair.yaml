@@ -37,7 +37,6 @@ targets:
         boot_wait: 30
         connection_timeout: 30
         smart_state_detection: true
-        fast_check_timeout: 3
 
   belkin_rt3200_2:
     features:
@@ -77,7 +76,6 @@ targets:
         boot_wait: 30
         connection_timeout: 30
         smart_state_detection: true
-        fast_check_timeout: 3
 
 imports:
   - ../strategies/physicalstrategy.py
