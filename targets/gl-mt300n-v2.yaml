@@ -46,7 +46,6 @@ targets:
         boot_wait: 60
         connection_timeout: 60
         smart_state_detection: true
-        fast_check_timeout: 3
 
 imports:
   - ../strategies/physicalstrategy.py
