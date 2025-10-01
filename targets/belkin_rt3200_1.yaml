@@ -30,7 +30,12 @@ targets:
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: True
+        explicit_scp_mode: False  # False for OpenSSH < 9.0
+
+      SysupgradeDriver:
+        keep_config: false
+        force: true
+        verify_boot_timeout: 120
 
       PhysicalDeviceStrategy:
         requires_serial_disconnect: false
@@ -40,3 +45,4 @@ targets:
 
 imports:
   - ../strategies/physicalstrategy.py
+  - ../drivers/sysupgrade_driver.py

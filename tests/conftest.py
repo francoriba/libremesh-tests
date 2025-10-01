@@ -42,6 +42,12 @@ def pytest_runtest_makereport(item, call):
 
 def pytest_addoption(parser):
     parser.addoption("--firmware", action="store", default="firmware.bin")
+    parser.addoption("--flash-firmware", action="store_true", 
+                     help="Flash firmware before running tests")
+    parser.addoption("--flash-keep-config", action="store_true",
+                     help="Keep configuration when flashing")
+    parser.addoption("--flash-verify-version", action="store", default=None,
+                     help="Verify firmware version after flashing")
 
 
 def pytest_sessionfinish(session):
@@ -241,3 +247,70 @@ def mesh_routers(belkin1_shell, belkin2_shell):
         "belkin1": belkin1_shell,
         "belkin2": belkin2_shell
     }
+
+
+@pytest.fixture(scope="session")
+def firmware_image(pytestconfig):
+    """Obtiene la ruta de la imagen de firmware desde --firmware o variable de entorno."""
+    firmware = pytestconfig.getoption("firmware")
+    if not firmware or not os.path.exists(firmware):
+        pytest.skip(f"Firmware image not found: {firmware}")
+    return firmware
+
+
+@pytest.fixture(scope="session", autouse=True)
+def flash_firmware_if_requested(env, pytestconfig):
+    """
+    Automatically flashes firmware to all targets if --flash-firmware flag is provided.
+    
+    This fixture runs once per test session before any tests execute.
+    
+    Usage:
+        pytest --lg-env targets/belkin_rt3200_1.yaml --firmware /path/to/image.bin --flash-firmware
+    """
+    if not pytestconfig.getoption("flash_firmware", default=False):
+        return
+    
+    firmware = pytestconfig.getoption("firmware")
+    if not firmware or not os.path.exists(firmware):
+        pytest.fail(f"Cannot flash: firmware image not found: {firmware}")
+    
+    keep_config = pytestconfig.getoption("flash_keep_config", default=False)
+    verify_version = pytestconfig.getoption("flash_verify_version", default=None)
+    
+    logger.info(f"Session firmware flash requested: {firmware} (keep_config={keep_config})")
+    
+    for name, target in env.targets.items():
+        try:
+            strategy = target.get_driver("PhysicalDeviceStrategy")
+            logger.info(f"Flashing firmware on target '{name}'")
+            strategy.provision_with_firmware(
+                image_path=firmware,
+                keep_config=keep_config,
+                verify_version=verify_version
+            )
+            logger.info(f"Firmware flash completed successfully on target '{name}'")
+        except Exception as e:
+            logger.warning(f"Could not flash target '{name}': {e}")
+
+
+@pytest.fixture
+def flash_clean_firmware(strategy, firmware_image):
+    """
+    Flashes clean firmware (without preserving configuration) before a specific test.
+    
+    This fixture can be used by individual tests to ensure a known clean state.
+    
+    Usage:
+        def test_fresh_install(flash_clean_firmware, ssh_command):
+            # Router has clean firmware flashed
+            ...
+    """
+    strategy.provision_with_firmware(firmware_image, keep_config=False)
+    return strategy
+
+
+@pytest.fixture
+def sysupgrade_driver(target):
+    """Provides direct access to the SysupgradeDriver for manual flashing operations."""
+    return target.get_driver("SysupgradeDriver")

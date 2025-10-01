@@ -96,21 +96,29 @@ $(curdir)/gl-mt300n-v2:
 		--lg-log \
 		--log-cli-level=DEBUG
 
+$(curdir)/belkin_rt3200_1: FIRMWARE ?=
+$(curdir)/belkin_rt3200_1: FLASH_FIRMWARE ?= 0
 $(curdir)/belkin_rt3200_1:
 	@echo "Running tests on physical Belkin RT3200 (1) device..."
 	@echo "Make sure the device is connected via serial and Arduino relay (channel 2)"
 	$(pytest) \
 		--lg-env $(TESTSDIR)/targets/belkin_rt3200_1.yaml \
 		--lg-log \
-		--log-cli-level=DEBUG
+		--log-cli-level=DEBUG \
+		$(if $(FIRMWARE),--firmware $(FIRMWARE),) \
+		$(if $(filter 1,$(FLASH_FIRMWARE)),--flash-firmware,)
 
+$(curdir)/belkin_rt3200_2: FIRMWARE ?=
+$(curdir)/belkin_rt3200_2: FLASH_FIRMWARE ?= 0
 $(curdir)/belkin_rt3200_2:
 	@echo "Running tests on physical Belkin RT3200 (2) device..."
 	@echo "Make sure the device is connected via serial and Arduino relay (channel 3)"
 	$(pytest) \
 		--lg-env $(TESTSDIR)/targets/belkin_rt3200_2.yaml \
 		--lg-log \
-		--log-cli-level=DEBUG
+		--log-cli-level=DEBUG \
+		$(if $(FIRMWARE),--firmware $(FIRMWARE),) \
+		$(if $(filter 1,$(FLASH_FIRMWARE)),--flash-firmware,)
 
 $(curdir)/mesh_belkin_pair:
 	@echo "Running mesh tests on Belkin RT3200 pair..."
