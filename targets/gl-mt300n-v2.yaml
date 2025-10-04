@@ -43,8 +43,8 @@ targets:
 
       PhysicalDeviceStrategy:
         requires_serial_disconnect: true
-        boot_wait: 60
-        connection_timeout: 60
+        boot_wait: 30
+        connection_timeout: 30
         smart_state_detection: true
 
 imports:
