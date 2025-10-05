@@ -23,13 +23,14 @@ class PhysicalDeviceStrategy(Strategy):
         "shell": "ShellDriver",
     }
 
-    # Configuration
     requires_serial_disconnect = attr.ib(default=False)
     boot_wait = attr.ib(default=20)
     connection_timeout = attr.ib(default=60)
     smart_state_detection = attr.ib(default=True)
-
     status = attr.ib(default=Status.unknown)
+    enable_uboot_recovery = attr.ib(default=False)
+    max_recovery_attempts = attr.ib(default=2)
+    tftp_root = attr.ib(default="/srv/tftp")  # TFTP local directory
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
@@ -227,37 +228,133 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info("Network configuration completed")
 
     @step()
+    def attempt_uboot_recovery(self, firmware_image: str):
+        """
+        Attempts to recover device using U-Boot and TFTP.
+        
+        This method is called when normal boot fails after firmware flash.
+        It power cycles the device, interrupts U-Boot, loads firmware via TFTP,
+        and attempts to boot.
+        
+        Args:
+            firmware_image: Path to firmware image for recovery
+            
+        Raises:
+            StrategyError: If U-Boot recovery fails
+        """
+        import os
+        import shutil
+        from time import sleep
+        
+        logger.warning("Attempting U-Boot recovery")
+        
+        # Check if U-Boot is configured (without activating it yet)
+        try:
+            uboot = self.target.get_driver("UBootDriver", activate=False)
+        except Exception as e:
+            raise StrategyError(f"U-Boot recovery not configured: {e}")
+        
+        # Get SerialDriver (without activating it yet)
+        try:
+            serial = self.target.get_driver("SerialDriver", activate=False)
+        except Exception as e:
+            raise StrategyError(f"SerialDriver not available: {e}")
+        
+        # Copy firmware to TFTP root if not already there
+        firmware_basename = os.path.basename(firmware_image)
+        tftp_image_path = os.path.join(self.tftp_root, firmware_basename)
+        
+        if not os.path.exists(tftp_image_path) or os.path.getmtime(firmware_image) > os.path.getmtime(tftp_image_path):
+            logger.info(f"Copying firmware to TFTP root: {tftp_image_path}")
+            shutil.copy2(firmware_image, tftp_image_path)
+            # Set proper permissions for TFTP server
+            os.system(f"sudo chown tftp:tftp {tftp_image_path}")
+            os.system(f"sudo chmod 644 {tftp_image_path}")
+        
+        # Ensure device is completely off before attempting U-Boot access
+        logger.info("Ensuring device is powered off")
+        self.target.activate(self.power)
+        self.power.off()
+        sleep(5)  # Longer wait to ensure complete power down
+        
+        # Deactivate any active drivers to clear state
+        try:
+            if self.shell in self.target.active:
+                self.target.deactivate(self.shell)
+        except Exception:
+            pass
+        
+        try:
+            ssh = self.target.get_driver("SSHDriver", activate=False)
+            if ssh in self.target.active:
+                self.target.deactivate(ssh)
+        except Exception:
+            pass
+        
+        # Activate serial for U-Boot capture BEFORE powering on
+        self.target.activate(serial)
+        
+        # Power on
+        logger.info("Powering on device for U-Boot access")
+        self.power.on()
+        
+        # bomb the serial with whitespaces to interrupt autoboot
+        logger.info("Sending interrupt characters to catch U-Boot")
+        for i in range(15):
+            sleep(0.2)
+            serial.write(b' ')
+        
+        logger.info("Waiting for U-Boot prompt")
+        
+        try:
+            # Activate U-Boot (will wait for prompt)
+            self.target.activate(uboot)
+            logger.info("U-Boot prompt acquired")
+            
+            # Set bootfile variable to our firmware
+            uboot.run(f"setenv bootfile {firmware_basename}")
+            
+            # Execute init_commands (will do TFTP download)
+            logger.info(f"Loading firmware via TFTP: {firmware_basename}")
+            # init_commands are executed automatically when UBootDriver activates
+            
+            # Boot loaded image
+            logger.info("Booting recovered firmware...")
+            uboot.boot("")
+            uboot.await_boot()
+            
+            logger.info("U-Boot recovery boot initiated successfully")
+            
+        except Exception as e:
+            raise StrategyError(f"U-Boot recovery failed: {e}")
+
+    @step()
     def flash_firmware(self, image_path: str, keep_config: bool = False):
         """
         Flashes firmware and waits for device to boot.
-
-        This method handles the complete flash process:
-        1. Ensures device is in shell state
-        2. Executes firmware flash via SysupgradeDriver
-        3. Deactivates stale driver connections
-        4. Waits for reboot and re-establishes shell connection
-        5. Configures network if needed (for LibreMesh)
-
+        
+        If boot fails and U-Boot recovery is enabled, attempts automatic recovery.
+        
         Args:
             image_path: Path to firmware image file
             keep_config: If True, preserves device configuration
-
+            
         Raises:
-            StrategyError: If SysupgradeDriver is not configured or flash fails
+            StrategyError: If flash and all recovery attempts fail
         """
         # Ensure device is accessible
         if self.status != Status.shell:
             self.transition("shell")
-
+        
         # Get sysupgrade driver
         try:
             sysupgrade = self.target.get_driver("SysupgradeDriver")
         except Exception:
             raise StrategyError("SysupgradeDriver not configured for this target")
-
+        
         # Perform firmware flash
         sysupgrade.flash(image_path, keep_config=keep_config)
-
+        
         # Deactivate drivers to clear stale connections after reboot
         try:
             ssh = self.target.get_driver("SSHDriver")
@@ -265,21 +362,50 @@ class PhysicalDeviceStrategy(Strategy):
             logger.debug("Deactivated SSHDriver after firmware flash")
         except Exception as e:
             logger.debug(f"Could not deactivate SSH: {e}")
-
+        
         try:
             self.target.deactivate(self.shell)
             logger.debug("Deactivated ShellDriver after firmware flash")
         except Exception as e:
             logger.debug(f"Could not deactivate Shell: {e}")
-
-        # Re-establish connection after reboot
+        
+        # Try to re-establish connection after reboot
         self.status = Status.unknown
-        self.transition("shell")
-
-        # Configure network for LibreMesh (requires DHCP setup)
-        self.configure_libremesh_network()
-
-        logger.info("Firmware flash and reboot completed successfully")
+        
+        recovery_attempt = 0
+        while recovery_attempt <= self.max_recovery_attempts:
+            try:
+                # Attempt normal boot
+                logger.info(f"Attempting to establish shell connection (attempt {recovery_attempt + 1})")
+                self.transition("shell")
+                
+                # Configure network for LibreMesh
+                self.configure_libremesh_network()
+                
+                logger.info("Firmware flash and reboot completed successfully")
+                return
+                
+            except Exception as e:
+                logger.warning(f"Failed to establish shell after firmware flash: {e}")
+                
+                if recovery_attempt < self.max_recovery_attempts and self.enable_uboot_recovery:
+                    logger.warning(f"Starting U-Boot recovery attempt {recovery_attempt + 1}/{self.max_recovery_attempts}")
+                    
+                    try:
+                        self.attempt_uboot_recovery(image_path)
+                        recovery_attempt += 1
+                        # Loop will retry normal boot after recovery
+                        
+                    except Exception as recovery_error:
+                        logger.error(f"U-Boot recovery attempt {recovery_attempt + 1} failed: {recovery_error}")
+                        recovery_attempt += 1
+                        
+                        if recovery_attempt >= self.max_recovery_attempts:
+                            raise StrategyError(
+                                f"Device failed to boot after firmware flash and {self.max_recovery_attempts} recovery attempts"
+                            )
+                else:
+                    raise StrategyError(f"Device failed to boot after firmware flash: {e}")
 
     @step()
     def provision_with_firmware(self, image_path: str, keep_config: bool = False, verify_version: str = None):

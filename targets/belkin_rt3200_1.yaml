@@ -18,7 +18,7 @@ targets:
         cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
 
       SerialDriver:
-        txdelay: 0.05
+        txdelay: 0.01
 
       ShellDriver:
         prompt: '[\r\n]+.*?root@.*?#\s*'
@@ -30,7 +30,19 @@ targets:
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: False  # False for OpenSSH < 9.0
+        explicit_scp_mode: False
+
+      # U-Boot driver for recovery
+      UBootDriver:
+        prompt: "MT7622>"
+        autoboot: "Press UP/DOWN to move"
+        interrupt: "0\n"
+        init_commands:
+          - setenv serverip 192.168.20.234
+          - setenv ipaddr 192.168.20.182
+          - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb
+          - tftpboot 0x4007ff28
+        boot_command: bootm 0x4007ff28
 
       SysupgradeDriver:
         keep_config: false
@@ -42,6 +54,9 @@ targets:
         boot_wait: 30
         connection_timeout: 30
         smart_state_detection: true
+        enable_uboot_recovery: true
+        max_recovery_attempts: 2
+        tftp_root: "/srv/tftp"
 
 imports:
   - ../strategies/physicalstrategy.py
