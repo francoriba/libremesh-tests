@@ -232,9 +232,12 @@ class PhysicalDeviceStrategy(Strategy):
         """
         Attempts to recover device using U-Boot and TFTP.
         
-        This method is called when normal boot fails after firmware flash.
-        It power cycles the device, interrupts U-Boot, loads firmware via TFTP,
-        and attempts to boot.
+        This method:
+        1. Power cycles the device
+        2. Interrupts U-Boot
+        3. Loads firmware via TFTP to RAM
+        4. Boots temporarily from RAM
+        5. Persists firmware to flash using sysupgrade
         
         Args:
             firmware_image: Path to firmware image for recovery
@@ -298,7 +301,7 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info("Powering on device for U-Boot access")
         self.power.on()
         
-        # bomb the serial with whitespaces to interrupt autoboot
+        # Send interrupt characters to catch U-Boot
         logger.info("Sending interrupt characters to catch U-Boot")
         for i in range(15):
             sleep(0.2)
@@ -315,15 +318,93 @@ class PhysicalDeviceStrategy(Strategy):
             uboot.run(f"setenv bootfile {firmware_basename}")
             
             # Execute init_commands (will do TFTP download)
-            logger.info(f"Loading firmware via TFTP: {firmware_basename}")
+            logger.info(f"Loading firmware via TFTP to RAM: {firmware_basename}")
             # init_commands are executed automatically when UBootDriver activates
             
-            # Boot loaded image
-            logger.info("Booting recovered firmware...")
+            # Boot loaded image from RAM (temporary)
+            logger.info("Booting firmware from RAM...")
             uboot.boot("")
             uboot.await_boot()
             
-            logger.info("U-Boot recovery boot initiated successfully")
+            logger.info("U-Boot recovery: device booted from RAM, waiting for shell...")
+            
+            # Wait for shell to become available
+            # Deactivate UBootDriver first
+            self.target.deactivate(uboot)
+            
+            # Now wait for Linux shell (this will take time as system boots)
+            logger.info("Waiting for Linux shell after RAM boot...")
+            self.status = Status.unknown
+            
+            # Try to get shell access
+            max_shell_wait = 120  # 2 minutes for boot
+            shell_acquired = False
+            for attempt in range(max_shell_wait):
+                try:
+                    if self._check_shell_active():
+                        self.target.activate(self.shell)
+                        shell_acquired = True
+                        logger.info("Shell access acquired after RAM boot")
+                        break
+                except Exception:
+                    pass
+                sleep(1)
+            
+            if not shell_acquired:
+                raise StrategyError("Failed to get shell after U-Boot RAM boot")
+            
+            # Now persist the firmware using sysupgrade
+            logger.info(f"Persisting firmware to flash using sysupgrade...")
+            
+            # Upload firmware via serial or try SSH
+            try:
+                # Try to activate SSH for faster transfer
+                ssh = self.target.get_driver("SSHDriver", activate=False)
+                self.target.activate(ssh)
+                logger.info("SSH available, uploading firmware for persistence")
+                ssh.put(firmware_image, "/tmp/recovery_sysupgrade.bin")
+                firmware_path = "/tmp/recovery_sysupgrade.bin"
+            except Exception as e:
+                logger.warning(f"SSH not available for upload: {e}, checking if already in /tmp")
+                # Firmware might already be in /tmp from a previous attempt
+                # or we need to use serial to check
+                firmware_path = f"/tmp/{firmware_basename}"
+                
+                # Check if file exists
+                try:
+                    result = self.shell.run(f"ls -l {firmware_path}")
+                    if result[2] != 0:  # exit code != 0
+                        raise StrategyError("Firmware not available in /tmp and SSH upload failed")
+                except Exception:
+                    raise StrategyError("Cannot verify firmware in /tmp")
+            
+            # Execute sysupgrade to persist (don't wait for response as it will reboot)
+            logger.info(f"Running sysupgrade -n -F {firmware_path} to persist firmware...")
+            try:
+                # Use sendline instead of run() because sysupgrade kills the shell
+                self.shell.console.sendline(f"sysupgrade -n -F {firmware_path}")
+                logger.info("Sysupgrade command sent, device is rebooting...")
+            except Exception as e:
+                # This is expected as the shell will close
+                logger.info(f"Shell closed during sysupgrade (expected): {e}")
+            
+            # Wait for reboot to complete
+            logger.info("Waiting for device to reboot after persistence...")
+            sleep(10)  # Give time for reboot to start
+            
+            # Deactivate stale connections
+            try:
+                self.target.deactivate(self.shell)
+            except Exception:
+                pass
+            try:
+                if ssh in self.target.active:
+                    self.target.deactivate(ssh)
+            except Exception:
+                pass
+            
+            self.status = Status.unknown
+            logger.info("U-Boot recovery with persistence completed successfully")
             
         except Exception as e:
             raise StrategyError(f"U-Boot recovery failed: {e}")
