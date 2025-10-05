@@ -40,14 +40,17 @@ targets:
         init_commands:
           - setenv serverip 192.168.20.234
           - setenv ipaddr 192.168.20.182
-          - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb
+          - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
           - tftpboot 0x4007ff28
         boot_command: bootm 0x4007ff28
 
       SysupgradeDriver:
         keep_config: false
-        force: true
+        allow_downgrade: false
         verify_boot_timeout: 120
+        expected_board: "linksys,e8450-ubi"
+        skip_if_installed: false
+        tmp_space_margin_mb: 2
 
       PhysicalDeviceStrategy:
         requires_serial_disconnect: false
@@ -57,6 +60,14 @@ targets:
         enable_uboot_recovery: true
         max_recovery_attempts: 2
         tftp_root: "/srv/tftp"
+        # U-Boot recovery timing (device-specific)
+        uboot_interrupt_delay: 0.2        # Delay between interrupt chars (seconds)
+        uboot_interrupt_count: 15         # Number of interrupt chars to send
+        uboot_power_off_wait: 5           # Wait after power off (seconds)
+        uboot_boot_wait: 120              # Max wait for shell after RAM boot (seconds)
+        # Network configuration timing
+        post_dhcp_wait: 15                # Wait after network restart (seconds)
+        network_config_retry_wait: 1      # Wait between config commands (seconds)
 
 imports:
   - ../strategies/physicalstrategy.py

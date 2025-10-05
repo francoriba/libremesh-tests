@@ -48,6 +48,12 @@ def pytest_addoption(parser):
                      help="Keep configuration when flashing")
     parser.addoption("--flash-verify-version", action="store", default=None,
                      help="Verify firmware version after flashing")
+    parser.addoption("--flash-sha256", action="store", default=None,
+                     help="Expected SHA256 checksum for firmware validation")
+    parser.addoption("--flash-skip-if-same", action="store_true",
+                     help="Skip flashing if same version already installed")
+    parser.addoption("--flash-validate-only", action="store_true",
+                     help="Validate firmware without actually flashing (CI mode)")
 
 
 def pytest_sessionfinish(session):
@@ -266,7 +272,11 @@ def flash_firmware_if_requested(env, pytestconfig):
     This fixture runs once per test session before any tests execute.
     
     Usage:
-        pytest --lg-env targets/belkin_rt3200_1.yaml --firmware /path/to/image.bin --flash-firmware
+        pytest --lg-env targets/belkin_rt3200_1.yaml \
+               --firmware /path/to/image.bin \
+               --flash-firmware \
+               --flash-sha256 abc123... \
+               --flash-skip-if-same
     """
     if not pytestconfig.getoption("flash_firmware", default=False):
         return
@@ -277,21 +287,63 @@ def flash_firmware_if_requested(env, pytestconfig):
     
     keep_config = pytestconfig.getoption("flash_keep_config", default=False)
     verify_version = pytestconfig.getoption("flash_verify_version", default=None)
+    expected_sha256 = pytestconfig.getoption("flash_sha256", default=None)
+    skip_if_same = pytestconfig.getoption("flash_skip_if_same", default=False)
+    validate_only = pytestconfig.getoption("flash_validate_only", default=False)
     
-    logger.info(f"Session firmware flash requested: {firmware} (keep_config={keep_config})")
+    logger.info(f"Session firmware flash requested: {firmware}")
+    logger.info(f"  keep_config={keep_config}, skip_if_same={skip_if_same}, validate_only={validate_only}")
+    if expected_sha256:
+        logger.info(f"  SHA256: {expected_sha256}")
     
     for name, target in env.targets.items():
         try:
+            # Get ONLY strategy first (don't get sysupgrade yet, it has ShellDriver binding)
             strategy = target.get_driver("PhysicalDeviceStrategy")
-            logger.info(f"Flashing firmware on target '{name}'")
-            strategy.provision_with_firmware(
-                image_path=firmware,
-                keep_config=keep_config,
-                verify_version=verify_version
-            )
-            logger.info(f"Firmware flash completed successfully on target '{name}'")
+            
+            # Ensure device is powered on and shell is available
+            # power on the device if needed
+            logger.info(f"Ensuring device '{name}' is powered on and shell is available")
+            strategy.transition("shell")
+            
+            # get sysupgrade driver (shell is already active, so binding won't cause issues)
+            sysupgrade = target.get_driver("SysupgradeDriver")
+            
+            # Configure skip behavior
+            original_skip = sysupgrade.skip_if_installed
+            sysupgrade.skip_if_installed = skip_if_same
+            
+            logger.info(f"Processing firmware for target '{name}'")
+            
+            if validate_only:
+                # Validate-only mode: run all checks without flashing
+                logger.info(f"Running validation-only mode on '{name}'")
+                sysupgrade.flash(
+                    firmware,
+                    keep_config=keep_config,
+                    expected_sha256=expected_sha256,
+                    expected_version=verify_version,
+                    validate_only=True
+                )
+                logger.info(f"Validation completed successfully on target '{name}'")
+            else:
+                # Full flash with provisioning (includes network config)
+                logger.info(f"Flashing firmware on target '{name}'")
+                strategy.provision_with_firmware(
+                    image_path=firmware,
+                    keep_config=keep_config,
+                    verify_version=verify_version
+                )
+                logger.info(f"Firmware flash completed successfully on target '{name}'")
+            
+            # Restore original skip setting
+            sysupgrade.skip_if_installed = original_skip
+            
         except Exception as e:
-            logger.warning(f"Could not flash target '{name}': {e}")
+            logger.error(f"Failed to process firmware on target '{name}': {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            pytest.fail(f"Firmware processing failed on '{name}': {e}")
 
 
 @pytest.fixture
