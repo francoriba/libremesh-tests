@@ -27,7 +27,15 @@ def test_uboot_recovery_manual(strategy, target, firmware_image):
     
     # Verify SSH is also working
     try:
-        ssh = target.get_driver("SSHDriver")
+        ssh = target.get_driver("SSHDriver", activate=False)
+        
+        # Deactivate stale SSH connection if active (ignore errors if not active)
+        try:
+            target.deactivate(ssh)
+        except Exception:
+            pass
+        
+        # Activate SSH with fresh connection
         target.activate(ssh)
         ssh.run_check("true")
         print("SSH connection successful after recovery")
