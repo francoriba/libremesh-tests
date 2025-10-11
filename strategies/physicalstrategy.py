@@ -41,6 +41,21 @@ class Timeouts:
     NETWORK_INIT_OPENWRT = 15
     TFTP_DOWNLOAD = 60
     REBOOT_START_DELAY = 10
+    
+    # SSH availability verification timeouts
+    SSH_AVAILABILITY_CHECK_LIBREMESH = 120
+    SSH_AVAILABILITY_CHECK_OPENWRT = 60
+    SSH_AVAILABILITY_RETRY_INTERVAL = 5
+    SSH_RECOVERY_TIMEOUT = 60
+    SSH_RECOVERY_RETRY_INTERVAL = 3
+    
+    # SSH recovery via serial timeouts
+    SSH_RECOVERY_COMMAND_WAIT = 1
+    SSH_RECOVERY_STOP_WAIT = 2
+    SSH_RECOVERY_NETWORK_RESTART_WAIT = 5
+    SSH_RECOVERY_NETWORK_SETTLE = 15
+    SSH_RECOVERY_DHCP_REQUEST_WAIT = 10
+    SSH_RECOVERY_DROPBEAR_RESTART_WAIT = 3
 
 
 class Indices:
@@ -62,6 +77,13 @@ class ShutdownConfig:
 class WakeConsoleConfig:
     ATTEMPTS = 3
     DELAY = 0.2
+
+
+class SSHRecoveryConfig:
+    """Configuration constants for SSH recovery operations."""
+    DHCP_CHECK_ATTEMPTS = 12
+    DHCP_CHECK_INTERVAL = 5  # seconds between DHCP checks
+    SERIAL_EXPECT_TIMEOUT = 10  # timeout for serial expect operations
 
 
 @target_factory.reg_driver
@@ -326,7 +348,24 @@ class PhysicalDeviceStrategy(Strategy):
 
             logger.info("Using SSH for network configuration")
             self._execute_network_config_commands_via_ssh(ssh)
+            
+            # Deactivate SSH since network restart kills the connection
+            try:
+                self.target.deactivate(ssh)
+            except Exception:
+                pass
+            
+            # Wait for network to come back up
             self._wait_for_network_reconfiguration()
+            
+            # Verify SSH comes back after network restart
+            # Use default timeout (typically for LibreMesh since this is called from configure_libremesh_network)
+            if not self._wait_for_ssh_available():
+                logger.warning("SSH became unavailable after network restart via SSH, attempting recovery")
+                if not self._force_ssh_up_via_serial():
+                    logger.warning("Failed to recover SSH, falling back to serial configuration")
+                    return False
+                logger.info("SSH successfully recovered after network restart")
 
             logger.info("Network configuration via SSH completed")
             return True
@@ -378,6 +417,16 @@ class PhysicalDeviceStrategy(Strategy):
             self._reboot_and_wait_for_shell(is_libremesh)
         else:
             self._wait_for_network_initialization(is_libremesh)
+
+        # Verify SSH is actually available after network configuration
+        ssh_timeout = (Timeouts.SSH_AVAILABILITY_CHECK_LIBREMESH if is_libremesh 
+                      else Timeouts.SSH_AVAILABILITY_CHECK_OPENWRT)
+        if not self._wait_for_ssh_available(timeout=ssh_timeout):
+            logger.warning("SSH did not become available after network configuration, attempting recovery")
+            if not self._force_ssh_up_via_serial():
+                logger.error("Failed to bring SSH up even after recovery attempts")
+                raise StrategyError("SSH is not available and recovery via serial failed")
+            logger.info("SSH successfully recovered via serial")
 
         logger.info("Network configuration via serial completed")
 
@@ -453,6 +502,7 @@ class PhysicalDeviceStrategy(Strategy):
         logger.debug("Using LibreMesh network configuration commands")
 
         commands = [
+            # Configure LibreMesh UCI to use DHCP
             'uci set lime-defaults.lan.proto=dhcp 2>/dev/null; true',
             'uci -q delete lime-defaults.lan.ipaddr 2>/dev/null; true',
             'uci -q delete lime-defaults.lan.netmask 2>/dev/null; true',
@@ -461,10 +511,13 @@ class PhysicalDeviceStrategy(Strategy):
             'uci -q delete lime.lan.ipaddr 2>/dev/null; true',
             'uci -q delete lime.lan.netmask 2>/dev/null; true',
             'uci commit lime 2>/dev/null; true',
+            # Configure network directly
             'uci set network.lan.proto=dhcp',
             'uci -q delete network.lan.ipaddr',
             'uci -q delete network.lan.netmask',
             'uci commit network',
+            # Disable lime-config auto-run to prevent it from overwriting our config on boot
+            '/etc/init.d/lime-config disable 2>/dev/null; true',
             'sync',
         ]
 
@@ -579,6 +632,212 @@ class PhysicalDeviceStrategy(Strategy):
             logger.info(f"Waiting {wait_time}s for network reconfiguration (no reboot)")
 
         sleep(wait_time)
+
+    def _wait_for_ssh_available(self, timeout=None, retry_interval=None):
+        """
+        Actively polls for SSH availability after network configuration.
+        
+        This method repeatedly attempts to connect to the device via SSH until
+        either a connection succeeds or the timeout expires. It cleans up stale
+        connections before each retry attempt.
+        
+        Args:
+            timeout: Maximum time to wait for SSH (seconds). 
+                    Defaults to SSH_AVAILABILITY_CHECK_LIBREMESH or SSH_AVAILABILITY_CHECK_OPENWRT.
+            retry_interval: Time between connection attempts (seconds).
+                          Defaults to SSH_AVAILABILITY_RETRY_INTERVAL.
+        
+        Returns:
+            bool: True if SSH became available and is responding, False otherwise.
+        """
+        if timeout is None:
+            timeout = Timeouts.SSH_AVAILABILITY_CHECK_LIBREMESH
+        if retry_interval is None:
+            retry_interval = Timeouts.SSH_AVAILABILITY_RETRY_INTERVAL
+            
+        logger.info(f"Waiting up to {timeout}s for SSH to become available")
+        start_time = _time_mod()
+        
+        while (_time_mod() - start_time) < timeout:
+            try:
+                ssh = self.target.get_driver("SSHDriver", activate=False)
+                
+                # Clean up any stale connection before retrying
+                try:
+                    if ssh in self.target.active:
+                        self.target.deactivate(ssh)
+                except Exception:
+                    pass
+                
+                # Attempt to connect and verify with a test command
+                self.target.activate(ssh)
+                result = ssh.run("echo test", timeout=Timeouts.CONNECTION_CHECK)
+                
+                if result and result[Indices.STDOUT] and 'test' in result[Indices.STDOUT][0]:
+                    logger.info("SSH is now available and responding")
+                    return True
+                    
+            except Exception as e:
+                logger.debug(f"SSH not yet available: {e}")
+                
+            sleep(retry_interval)
+        
+        logger.warning(f"SSH did not become available within {timeout}s")
+        return False
+
+    def _force_ssh_up_via_serial(self):
+        """
+        Recovers SSH connectivity via serial console when network configuration fails.
+        
+        This recovery method is invoked when SSH does not become available after network
+        configuration. It performs the following steps:
+        
+        1. Stops and disables LibreMesh's lime-config daemon (which can interfere with DHCP)
+        2. Configures UCI settings for persistent DHCP on the LAN interface
+        3. Restarts the network service
+        4. Actively waits for the device to obtain an IP address via DHCP
+        5. Ensures the dropbear SSH daemon is running
+        6. Verifies SSH connectivity
+        
+        Returns:
+            bool: True if SSH was successfully recovered, False otherwise.
+        """
+        logger.info("Attempting to force SSH up via serial console")
+        
+        try:
+            serial = self.target.get_driver("SerialDriver")
+            
+            self._stop_lime_config_service(serial)
+            self._configure_persistent_dhcp_via_serial(serial)
+            self._restart_network_via_serial(serial)
+            ip_obtained = self._wait_for_dhcp_ip_address(serial)
+            
+            if not ip_obtained:
+                self._attempt_aggressive_dhcp_renewal(serial)
+            
+            self._ensure_dropbear_running(serial)
+            
+            logger.info("SSH recovery via serial completed, verifying SSH availability")
+            return self._wait_for_ssh_available(
+                timeout=Timeouts.SSH_RECOVERY_TIMEOUT,
+                retry_interval=Timeouts.SSH_RECOVERY_RETRY_INTERVAL
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to force SSH up via serial: {e}")
+            return False
+    
+    def _stop_lime_config_service(self, serial):
+        """Stops and disables LibreMesh auto-configuration service."""
+        logger.info("Stopping any lime-config processes")
+        
+        # Ensure we have a shell prompt
+        serial.sendline("")
+        sleep(Timeouts.BUFFER_FLUSH)
+        
+        # Kill any running lime-config processes
+        serial.sendline("killall lime-config 2>/dev/null; true")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        # Disable the service permanently
+        logger.info("Disabling LibreMesh auto-configuration permanently")
+        serial.sendline("/etc/init.d/lime-config stop 2>/dev/null; true")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        serial.sendline("/etc/init.d/lime-config disable 2>/dev/null; true")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+    
+    def _configure_persistent_dhcp_via_serial(self, serial):
+        """Configures UCI for persistent DHCP on LAN interface."""
+        logger.info("Configuring UCI for persistent DHCP on LAN")
+        
+        # Configure LibreMesh UCI files
+        serial.sendline("uci set lime-defaults.lan.proto=dhcp 2>/dev/null; uci commit lime-defaults 2>/dev/null; true")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        serial.sendline("uci set lime.lan.proto=dhcp 2>/dev/null; uci commit lime 2>/dev/null; true")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        # Configure network UCI
+        serial.sendline("uci set network.lan.proto=dhcp; uci commit network")
+        sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+    
+    def _restart_network_via_serial(self, serial):
+        """Restarts the network service via serial console."""
+        logger.info("Restarting network interface")
+        serial.sendline("/etc/init.d/network restart")
+        sleep(Timeouts.SSH_RECOVERY_NETWORK_RESTART_WAIT)
+        
+        try:
+            serial.expect('#', timeout=Timeouts.NETWORK_RESTART_LIBREMESH)
+        except Exception:
+            logger.debug("Network restart may have interrupted serial")
+            serial.sendline("")
+            sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+    
+    def _wait_for_dhcp_ip_address(self, serial):
+        """
+        Actively waits for the device to obtain an IP address via DHCP.
+        
+        Args:
+            serial: Serial driver instance
+            
+        Returns:
+            bool: True if IP address was obtained, False otherwise
+        """
+        max_wait_seconds = SSHRecoveryConfig.DHCP_CHECK_ATTEMPTS * SSHRecoveryConfig.DHCP_CHECK_INTERVAL
+        logger.info(f"Waiting for DHCP to assign IP address (up to {max_wait_seconds}s)")
+        
+        for attempt in range(SSHRecoveryConfig.DHCP_CHECK_ATTEMPTS):
+            serial.sendline("")
+            sleep(Timeouts.BUFFER_FLUSH)
+            serial.sendline("ip -4 addr show br-lan | grep -o 'inet 192\\.168\\.[0-9]*\\.[0-9]*' | head -1")
+            sleep(Timeouts.SSH_RECOVERY_STOP_WAIT)
+            
+            try:
+                result = serial.expect(['inet 192\\.168', '#'], timeout=SSHRecoveryConfig.DHCP_CHECK_INTERVAL)
+                if result[0] == 0:
+                    logger.info(f"Device obtained IP address (attempt {attempt + 1}/{SSHRecoveryConfig.DHCP_CHECK_ATTEMPTS})")
+                    return True
+            except Exception:
+                pass
+            
+            # Don't sleep on last attempt
+            if attempt < SSHRecoveryConfig.DHCP_CHECK_ATTEMPTS - 1:
+                logger.debug(f"No IP yet, waiting... (attempt {attempt + 1}/{SSHRecoveryConfig.DHCP_CHECK_ATTEMPTS})")
+                sleep(SSHRecoveryConfig.DHCP_CHECK_INTERVAL - Timeouts.SSH_RECOVERY_STOP_WAIT)
+        
+        logger.warning("Device did not obtain IP address via DHCP")
+        return False
+    
+    def _attempt_aggressive_dhcp_renewal(self, serial):
+        """Attempts to force DHCP lease acquisition using udhcpc."""
+        logger.info("Attempting aggressive DHCP renewal")
+        serial.sendline("")
+        sleep(Timeouts.BUFFER_FLUSH)
+        serial.sendline("udhcpc -i br-lan -n -q 2>&1 || udhcpc -i eth0 -n -q 2>&1")
+        sleep(Timeouts.SSH_RECOVERY_DHCP_REQUEST_WAIT)
+        serial.expect('#', timeout=Timeouts.SSH_RECOVERY_NETWORK_SETTLE)
+    
+    def _ensure_dropbear_running(self, serial):
+        """Ensures the dropbear SSH daemon is running."""
+        logger.info("Ensuring dropbear SSH daemon is running")
+        serial.sendline("")
+        sleep(Timeouts.BUFFER_FLUSH)
+        serial.sendline("/etc/init.d/dropbear restart 2>&1")
+        sleep(Timeouts.SSH_RECOVERY_DROPBEAR_RESTART_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        # Verify dropbear is running
+        serial.sendline("pgrep dropbear && echo 'DROPBEAR_OK' || echo 'DROPBEAR_FAIL'")
+        sleep(Timeouts.SSH_RECOVERY_STOP_WAIT)
+        serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
 
     @step()
     def attempt_uboot_recovery(self, firmware_image: str):
@@ -886,13 +1145,10 @@ class PhysicalDeviceStrategy(Strategy):
         """Ensures network is configured for SSH access before attempting flash."""
         logger.info("Ensuring network configuration before firmware upload")
 
-        try:
-            ssh = self.target.get_driver("SSHDriver", activate=False)
-            self.target.activate(ssh)
-            logger.info("SSH already available, skipping network configuration")
-        except Exception as e:
-            logger.info(f"SSH not available ({e}), configuring network via serial")
-            self.configure_libremesh_network(reboot_after=False)
+        # Always configure network via serial to ensure consistent state,
+        # even if SSH is temporarily available from previous firmware
+        logger.info("Configuring network via serial to ensure clean state before flash")
+        self.configure_libremesh_network(reboot_after=False)
 
     def _perform_firmware_flash(self, image_path, keep_config):
         """Performs the actual firmware flash operation."""
