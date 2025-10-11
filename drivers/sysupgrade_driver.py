@@ -92,25 +92,41 @@ class SysupgradeDriver(Driver):
             )
         logger.debug("sysupgrade command is available")
 
-    def _get_board_name(self):
+    def _get_board_name(self) -> str:
         """
-        Retrieves the device board name.
+        Retrieves board name from device.
 
         Returns:
-            str: Board name (e.g., "linksys,e8450-ubi")
+            str: Board name
 
         Raises:
             StrategyError: If board name cannot be retrieved
         """
-        stdout, stderr, exit_code = self.shell.run(f"cat {SYSINFO_BOARD_PATH}")
-        if exit_code == 0 and stdout:
-            return stdout[0].strip()
+        result = self.shell.run("cat /tmp/sysinfo/board_name")
+        stdout, stderr, exit_code = result
 
-        stdout, stderr, exit_code = self.shell.run("ubus call system board | jsonfilter -e '@.board_name'")
-        if exit_code == 0 and stdout:
-            return stdout[0].strip()
+        if exit_code != 0:
+            raise StrategyError(
+                f"Failed to read board name (exit code {exit_code}): {stderr}"
+            )
 
-        raise StrategyError("Failed to retrieve device board name")
+        if not stdout:
+            raise StrategyError("No board name returned from device")
+
+        # Filter out kernel messages that may appear in stdout
+        board_lines = [
+            line.strip()
+            for line in stdout
+            if line.strip() and not line.strip().startswith('[')
+        ]
+
+        if not board_lines:
+            raise StrategyError(
+                f"Could not extract board name from output (only kernel messages found): {stdout}"
+            )
+
+        board_name = board_lines[0]
+        return board_name
 
     def _calculate_sha256(self, file_path: str) -> str:
         """
