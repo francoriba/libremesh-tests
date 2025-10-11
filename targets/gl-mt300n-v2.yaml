@@ -29,24 +29,41 @@ targets:
         txdelay: 0.05
 
       ShellDriver:
-        prompt: 'root@[\w\-.]+:[/\w\-.~]+# '
-        login_prompt: '(?:GL-MT300N-V2|OpenWrt).* login: '
+        prompt: '[\r\n]+.*?root@.*?#\s*'
+        login_prompt: 'Please press Enter to activate this console\.'
         await_login_timeout: 15
         login_timeout: 120
         post_login_settle_time: 5
         username: root
-        password: bestpi4ever
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: True
+        explicit_scp_mode: False
+
+      SysupgradeDriver:
+        keep_config: false
+        allow_downgrade: false
+        verify_boot_timeout: 90
+        expected_board: "glinet,gl-mt300n-v2"
+        skip_if_installed: false
+        tmp_space_margin_mb: 1
 
       PhysicalDeviceStrategy:
         requires_serial_disconnect: true
         boot_wait: 30
-        connection_timeout: 30
+        connection_timeout: 90
         smart_state_detection: true
+        
+        # U-Boot recovery (disabled - GL-iNet uses web-based recovery)
+        enable_uboot_recovery: false
+        max_recovery_attempts: 0
+        
+        # Network configuration timing (GL-iNet specific)
+        # LibreMesh mesh initialization (batman-adv) takes 90+ seconds for full SSH availability
+        post_dhcp_wait: 90  # Increased for LibreMesh mesh (batman-adv) and SSH initialization
+        network_config_retry_wait: 1
 
 imports:
   - ../strategies/physicalstrategy.py
+  - ../drivers/sysupgrade_driver.py
   - ../drivers/serial_isolator_driver.py

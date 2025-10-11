@@ -18,6 +18,52 @@ class Status(enum.Enum):
     shell = 2
 
 
+# Timeouts and delays (in seconds)
+class Timeouts:
+    SHELL_CHECK = 2
+    SHELL_READY = 5
+    SHELL_RETRY_INTERVAL = 2
+    POWER_OFF_DELAY = 3
+    SERIAL_RECONNECT = 8
+    SHUTDOWN_COMMAND = 10
+    SHUTDOWN_CHECK = 2
+    CONNECTION_CHECK = 3
+    BUFFER_FLUSH = 0.5
+    FIRMWARE_DETECTION = 5
+    COMMAND_EXECUTION = 10
+    NETWORK_RESTART_OPENWRT = 10
+    NETWORK_RESTART_LIBREMESH = 30
+    CONSOLE_VERIFICATION = 5
+    REBOOT_COMMAND_DELAY = 2
+    REBOOT_MINIMUM_OPENWRT = 30
+    REBOOT_MINIMUM_LIBREMESH = 90
+    NETWORK_INIT_LIBREMESH = 60
+    NETWORK_INIT_OPENWRT = 15
+    TFTP_DOWNLOAD = 60
+    REBOOT_START_DELAY = 10
+
+
+class Indices:
+    STDOUT = 0
+    EXIT_CODE = 2
+    TEST_ACTIVE_MATCH = 0
+    PROMPT_MATCH = 2
+    SERIAL_BEFORE_CONTENT = 1
+
+
+class Permissions:
+    TFTP_FILE = 0o644
+
+
+class ShutdownConfig:
+    MAX_WAIT_CYCLES = 8
+
+
+class WakeConsoleConfig:
+    ATTEMPTS = 3
+    DELAY = 0.2
+
+
 @target_factory.reg_driver
 @attr.s(eq=False)
 class PhysicalDeviceStrategy(Strategy):
@@ -53,15 +99,15 @@ class PhysicalDeviceStrategy(Strategy):
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
-        try:
-            self.serial_isolator = self.target.get_driver("SerialIsolatorDriver")
-        except Exception:
-            self.serial_isolator = None
+        self.serial_isolator = self._get_optional_driver("SerialIsolatorDriver")
+        self.serial = self._get_optional_driver("SerialDriver")
 
+    def _get_optional_driver(self, driver_name):
+        """Safely retrieves an optional driver, returns None if not available."""
         try:
-            self.serial = self.target.get_driver("SerialDriver")
+            return self.target.get_driver(driver_name)
         except Exception:
-            self.serial = None
+            return None
 
     @step()
     def _check_shell_active(self):
@@ -73,12 +119,12 @@ class PhysicalDeviceStrategy(Strategy):
             serial_driver = self.target.get_driver("SerialDriver")
             serial_driver.sendline("echo test_active")
 
-            shell_check_timeout = 2
-            result = serial_driver.expect(["test_active", "login:", "#"], timeout=shell_check_timeout)
+            result = serial_driver.expect(
+                ["test_active", "login:", "#"],
+                timeout=Timeouts.SHELL_CHECK
+            )
 
-            test_active_index = 0
-            prompt_index = 2
-            return result[0] in (test_active_index, prompt_index)
+            return result[0] in (Indices.TEST_ACTIVE_MATCH, Indices.PROMPT_MATCH)
         except Exception:
             return False
 
@@ -100,7 +146,7 @@ class PhysicalDeviceStrategy(Strategy):
         if state == Status.off:
             self._power_off()
         elif state == Status.shell:
-            self._power_on_and_wait_shell(step)
+            self._power_on_and_wait_for_shell(step)
             self.target.activate(self.shell)
 
         self.status = state
@@ -110,7 +156,7 @@ class PhysicalDeviceStrategy(Strategy):
         self.target.activate(self.power)
         self.power.off()
 
-    def _power_on_and_wait_shell(self, step):
+    def _power_on_and_wait_for_shell(self, step):
         """Powers on the device and waits for shell to become available."""
         if self._check_shell_active():
             step.skip("Shell already active")
@@ -121,7 +167,7 @@ class PhysicalDeviceStrategy(Strategy):
         if self.requires_serial_disconnect and self.serial_isolator:
             self._power_cycle_with_serial_isolation()
         else:
-            self._standard_power_on()
+            self._perform_standard_power_on()
 
         self._wait_for_shell()
 
@@ -132,18 +178,15 @@ class PhysicalDeviceStrategy(Strategy):
 
         self.power.off()
         self.serial_isolator.disconnect()
-
-        power_off_delay = 3
-        sleep(power_off_delay)
+        sleep(Timeouts.POWER_OFF_DELAY)
 
         self.power.on()
         sleep(self.boot_wait)
 
         self.serial_isolator.connect()
-        serial_reconnect_delay = 8
-        sleep(serial_reconnect_delay)
+        sleep(Timeouts.SERIAL_RECONNECT)
 
-    def _standard_power_on(self):
+    def _perform_standard_power_on(self):
         """Standard power-on sequence (Belkin and most devices)."""
         logger.info("Using standard power-on sequence")
         self.power.on()
@@ -156,23 +199,24 @@ class PhysicalDeviceStrategy(Strategy):
         self.target.activate(self.shell)
 
         start_time = _time_mod()
-        shell_ready_timeout = 5
-        retry_interval = 2
 
         while _time_mod() - start_time < self.connection_timeout:
-            try:
-                result = self.shell.run("echo ready", timeout=shell_ready_timeout)
-                exit_code_index = 2
-                stdout_index = 0
+            if self._is_shell_ready():
+                return
 
-                if result[exit_code_index] == 0 and result[stdout_index] and "ready" in result[stdout_index][0]:
-                    return
-            except Exception:
-                pass
-
-            sleep(retry_interval)
+            sleep(Timeouts.SHELL_RETRY_INTERVAL)
 
         raise StrategyError(f"Shell not ready after {self.connection_timeout}s")
+
+    def _is_shell_ready(self):
+        """Checks if shell is responding correctly."""
+        try:
+            result = self.shell.run("echo ready", timeout=Timeouts.SHELL_READY)
+            return (result[Indices.EXIT_CODE] == 0 and
+                    result[Indices.STDOUT] and
+                    "ready" in result[Indices.STDOUT][0])
+        except Exception:
+            return False
 
     def _wake_console(self):
         """Sends newlines to wake up the console."""
@@ -180,15 +224,13 @@ class PhysicalDeviceStrategy(Strategy):
             return
 
         self.target.activate(self.serial)
-        wake_attempts = 3
-        wake_delay = 0.2
 
-        for _ in range(wake_attempts):
+        for _ in range(WakeConsoleConfig.ATTEMPTS):
             try:
                 self.serial.sendline("")
             except Exception:
                 pass
-            sleep(wake_delay)
+            sleep(WakeConsoleConfig.DELAY)
 
     @step()
     def force_power_cycle(self):
@@ -212,41 +254,46 @@ class PhysicalDeviceStrategy(Strategy):
         """Performs clean shutdown via SSH followed by guaranteed physical power off."""
         try:
             if self.status == Status.shell:
-                self._try_ssh_shutdown()
+                self._attempt_graceful_ssh_shutdown()
         finally:
             self.ensure_off()
             logger.info("Physical power off completed")
 
-    def _try_ssh_shutdown(self):
+    def _attempt_graceful_ssh_shutdown(self):
         """Attempts clean shutdown via SSH."""
         try:
             ssh = self.target.get_driver("SSHDriver")
             logger.info("Attempting clean shutdown via SSH")
 
-            shutdown_timeout = 10
-            ssh.run("poweroff", timeout=shutdown_timeout)
+            ssh.run("poweroff", timeout=Timeouts.SHUTDOWN_COMMAND)
 
-            max_shutdown_wait_cycles = 8
-            shutdown_check_interval = 2
-            connection_check_timeout = 3
-
-            for cycle in range(max_shutdown_wait_cycles):
-                try:
-                    ssh.run("true", timeout=connection_check_timeout)
-                    sleep(shutdown_check_interval)
-                except Exception:
-                    elapsed_time = (cycle + 1) * shutdown_check_interval
-                    logger.info(f"SSH stopped responding after {elapsed_time}s - clean shutdown completed")
+            for cycle in range(ShutdownConfig.MAX_WAIT_CYCLES):
+                if self._is_ssh_connection_dead(ssh, cycle):
                     return
 
-            max_wait_time = max_shutdown_wait_cycles * shutdown_check_interval
-            logger.warning(f"SSH still responding after {max_wait_time}s, will force physical shutdown")
+            self._log_shutdown_timeout_warning()
 
         except Exception as e:
             logger.warning(f"SSH shutdown failed: {e}, using physical power off")
 
+    def _is_ssh_connection_dead(self, ssh, cycle_number):
+        """Checks if SSH connection has terminated (indicating successful shutdown)."""
+        try:
+            ssh.run("true", timeout=Timeouts.CONNECTION_CHECK)
+            sleep(Timeouts.SHUTDOWN_CHECK)
+            return False
+        except Exception:
+            elapsed_time = (cycle_number + 1) * Timeouts.SHUTDOWN_CHECK
+            logger.info(f"SSH stopped responding after {elapsed_time}s - clean shutdown completed")
+            return True
+
+    def _log_shutdown_timeout_warning(self):
+        """Logs warning when SSH shutdown takes too long."""
+        max_wait_time = ShutdownConfig.MAX_WAIT_CYCLES * Timeouts.SHUTDOWN_CHECK
+        logger.warning(f"SSH still responding after {max_wait_time}s, will force physical shutdown")
+
     @step()
-    def configure_libremesh_network(self):
+    def configure_libremesh_network(self, reboot_after: bool = False):
         """
         Configures LibreMesh network to enable SSH access from test infrastructure.
 
@@ -255,13 +302,16 @@ class PhysicalDeviceStrategy(Strategy):
         address from the test network.
 
         Tries SSH first (preferred), falls back to serial console if unavailable.
+
+        Args:
+            reboot_after: If True, reboots device after configuration for persistence
         """
         logger.info("Configuring LibreMesh network interface for testbed access")
 
         if self._try_configure_network_via_ssh():
             return
 
-        self._configure_network_via_serial()
+        self._configure_network_via_serial(reboot_after=reboot_after)
 
     def _try_configure_network_via_ssh(self):
         """
@@ -275,22 +325,8 @@ class PhysicalDeviceStrategy(Strategy):
             self.target.activate(ssh)
 
             logger.info("Using SSH for network configuration")
-            network_config_commands = [
-                "uci set network.lan.proto='dhcp'",
-                "uci commit network",
-                "/etc/init.d/network restart",
-            ]
-
-            command_timeout = 30
-            for cmd in network_config_commands:
-                try:
-                    result = ssh.run(cmd, timeout=command_timeout)
-                    logger.debug(f"Network config command (SSH) '{cmd}' exited with code {result[2]}")
-                except Exception as e:
-                    logger.warning(f"Network config command (SSH) '{cmd}' failed: {e}")
-
-            logger.info(f"Waiting {self.post_dhcp_wait}s for network reconfiguration")
-            sleep(self.post_dhcp_wait)
+            self._execute_network_config_commands_via_ssh(ssh)
+            self._wait_for_network_reconfiguration()
 
             logger.info("Network configuration via SSH completed")
             return True
@@ -299,44 +335,250 @@ class PhysicalDeviceStrategy(Strategy):
             logger.info(f"SSH not available for network config, falling back to serial: {e}")
             return False
 
-    def _configure_network_via_serial(self):
-        """Configures network via serial console (fallback method)."""
-        self.target.activate(self.shell)
+    def _execute_network_config_commands_via_ssh(self, ssh):
+        """Executes network configuration commands via SSH."""
+        network_config_commands = [
+            "uci set network.lan.proto='dhcp'",
+            "uci commit network",
+            "/etc/init.d/network restart",
+        ]
 
+        for cmd in network_config_commands:
+            try:
+                result = ssh.run(cmd, timeout=Timeouts.COMMAND_EXECUTION)
+                logger.debug(f"Network config command (SSH) '{cmd}' exited with code {result[Indices.EXIT_CODE]}")
+            except Exception as e:
+                logger.warning(f"Network config command (SSH) '{cmd}' failed: {e}")
+
+    def _wait_for_network_reconfiguration(self):
+        """Waits for network to reconfigure after applying changes."""
+        logger.info(f"Waiting {self.post_dhcp_wait}s for network reconfiguration")
+        sleep(self.post_dhcp_wait)
+
+    def _configure_network_via_serial(self, reboot_after: bool = False):
+        """
+        Configures network via serial console (fallback method).
+
+        Args:
+            reboot_after: If True, reboots device after configuration for persistence
+        """
+        self.target.activate(self.shell)
+        self._flush_serial_buffer()
+
+        is_libremesh = self._detect_firmware_type()
+        network_config_commands = self._get_network_config_commands(is_libremesh, reboot_after)
+        network_restart_timeout = self._get_network_restart_timeout(is_libremesh)
+
+        self._execute_network_config_commands_via_serial(
+            network_config_commands,
+            network_restart_timeout
+        )
+
+        if reboot_after:
+            self._reboot_and_wait_for_shell(is_libremesh)
+        else:
+            self._wait_for_network_initialization(is_libremesh)
+
+        logger.info("Network configuration via serial completed")
+
+    def _flush_serial_buffer(self):
+        """Flushes serial buffer before network configuration."""
         try:
             serial = self.target.get_driver("SerialDriver")
             logger.debug("Flushing serial buffer before network config")
             serial.sendline("")
-            buffer_flush_delay = 0.5
-            sleep(buffer_flush_delay)
+            sleep(Timeouts.BUFFER_FLUSH)
         except Exception as e:
             logger.warning(f"Could not flush serial buffer: {e}")
 
-        network_config_commands = [
+    def _detect_firmware_type(self):
+        """
+        Detects if device is running LibreMesh or vanilla OpenWrt.
+
+        Returns:
+            bool: True if LibreMesh, False if vanilla OpenWrt
+        """
+        try:
+            serial = self.target.get_driver("SerialDriver")
+            logger.debug("Detecting firmware type (LibreMesh vs OpenWrt)")
+
+            if self._check_libremesh_hostname(serial):
+                logger.info("Detected LibreMesh firmware (hostname check)")
+                return True
+
+            if self._check_libremesh_package(serial):
+                logger.info("Detected LibreMesh firmware (package check)")
+                return True
+
+            logger.info("Detected vanilla OpenWrt firmware")
+            return False
+
+        except Exception as e:
+            logger.warning(f"Could not detect firmware type, assuming LibreMesh: {e}")
+            return True
+
+    def _check_libremesh_hostname(self, serial):
+        """Checks if hostname indicates LibreMesh firmware."""
+        serial.sendline("uname -n")
+        sleep(Timeouts.BUFFER_FLUSH)
+        result = serial.expect('#', timeout=Timeouts.FIRMWARE_DETECTION)
+        response = result[Indices.SERIAL_BEFORE_CONTENT] if isinstance(result, tuple) else result
+        return isinstance(response, bytes) and b'LiMe-' in response
+
+    def _check_libremesh_package(self, serial):
+        """Checks if LibreMesh package is installed."""
+        serial.sendline("opkg list-installed | grep -q '^lime-system' && echo LIME || echo OPENWRT")
+        sleep(Timeouts.BUFFER_FLUSH)
+        result = serial.expect('#', timeout=Timeouts.FIRMWARE_DETECTION)
+        response = result[Indices.SERIAL_BEFORE_CONTENT] if isinstance(result, tuple) else result
+        return isinstance(response, bytes) and b'LIME' in response
+
+    def _get_network_config_commands(self, is_libremesh, reboot_after):
+        """
+        Gets appropriate network configuration commands based on firmware type.
+
+        Args:
+            is_libremesh: True if LibreMesh firmware, False if OpenWrt
+            reboot_after: True if device will be rebooted after configuration
+
+        Returns:
+            list: Network configuration commands
+        """
+        if is_libremesh:
+            return self._get_libremesh_network_commands(reboot_after)
+        return self._get_openwrt_network_commands(reboot_after)
+
+    def _get_libremesh_network_commands(self, reboot_after):
+        """Gets LibreMesh-specific network configuration commands."""
+        logger.debug("Using LibreMesh network configuration commands")
+
+        commands = [
+            'uci set lime-defaults.lan.proto=dhcp 2>/dev/null; true',
+            'uci -q delete lime-defaults.lan.ipaddr 2>/dev/null; true',
+            'uci -q delete lime-defaults.lan.netmask 2>/dev/null; true',
+            'uci commit lime-defaults 2>/dev/null; true',
+            'uci set lime.lan.proto=dhcp 2>/dev/null; true',
+            'uci -q delete lime.lan.ipaddr 2>/dev/null; true',
+            'uci -q delete lime.lan.netmask 2>/dev/null; true',
+            'uci commit lime 2>/dev/null; true',
             'uci set network.lan.proto=dhcp',
+            'uci -q delete network.lan.ipaddr',
+            'uci -q delete network.lan.netmask',
             'uci commit network',
-            '/etc/init.d/network restart',
+            'sync',
         ]
 
-        command_timeout = 10
-        for cmd in network_config_commands:
+        if not reboot_after:
+            commands.append('/etc/init.d/network restart')
+
+        return commands
+
+    def _get_openwrt_network_commands(self, reboot_after):
+        """Gets vanilla OpenWrt network configuration commands."""
+        logger.debug("Using vanilla OpenWrt network configuration commands")
+
+        commands = [
+            'uci set network.lan.proto=dhcp',
+            'uci -q delete network.lan.ipaddr',
+            'uci -q delete network.lan.netmask',
+            'uci commit network',
+            'sync',
+        ]
+
+        if not reboot_after:
+            commands.append('/etc/init.d/network restart')
+
+        return commands
+
+    def _get_network_restart_timeout(self, is_libremesh):
+        """Gets appropriate timeout for network restart based on firmware type."""
+        return Timeouts.NETWORK_RESTART_LIBREMESH if is_libremesh else Timeouts.NETWORK_RESTART_OPENWRT
+
+    def _execute_network_config_commands_via_serial(self, commands, network_restart_timeout):
+        """Executes network configuration commands via serial console."""
+        serial = self.target.get_driver("SerialDriver")
+
+        for cmd in commands:
+            self._execute_single_network_command(serial, cmd, network_restart_timeout)
+
+    def _execute_single_network_command(self, serial, command, network_restart_timeout):
+        """Executes a single network configuration command."""
+        try:
+            logger.debug(f"Sending network config command: {command}")
+            serial.sendline(command)
+            sleep(self.network_config_retry_wait)
+
+            timeout = network_restart_timeout if 'network restart' in command else Timeouts.COMMAND_EXECUTION
+
+            if 'network restart' in command:
+                logger.debug(f"Waiting up to {timeout}s for network restart to complete")
+
             try:
-                logger.debug(f"Sending network config command: {cmd}")
-                serial.sendline(cmd)
-                sleep(self.network_config_retry_wait)
-
-                try:
-                    serial.expect('#', timeout=command_timeout)
-                    logger.debug(f"Network config command '{cmd}' sent successfully")
-                except Exception as e:
-                    logger.debug(f"Expect after '{cmd}' had issues (non-fatal): {e}")
-
+                serial.expect('#', timeout=timeout)
+                logger.debug(f"Network config command '{command}' sent successfully")
             except Exception as e:
-                logger.warning(f"Network config command '{cmd}' failed: {e}")
+                logger.debug(f"Expect after '{command}' had issues (non-fatal): {e}")
 
-        logger.info(f"Waiting {self.post_dhcp_wait}s for network reconfiguration")
-        sleep(self.post_dhcp_wait)
-        logger.info("Network configuration via serial completed")
+        except Exception as e:
+            logger.warning(f"Network config command '{command}' failed: {e}")
+
+    def _reboot_and_wait_for_shell(self, is_libremesh):
+        """Reboots device and waits for shell to become available."""
+        self._verify_console_responsive_before_reboot()
+        self._send_reboot_command()
+
+        reboot_wait = self._calculate_reboot_wait_time(is_libremesh)
+        logger.info(f"Waiting {reboot_wait}s for device reboot and network initialization")
+        sleep(reboot_wait)
+
+        self._wait_for_shell()
+        logger.info("Network configuration via serial completed (device rebooted)")
+
+    def _verify_console_responsive_before_reboot(self):
+        """Verifies serial console is responsive before sending reboot command."""
+        serial = self.target.get_driver("SerialDriver")
+        logger.debug("Verifying serial console is responsive before reboot")
+
+        try:
+            serial.sendline('echo "ready_to_reboot"')
+            serial.expect('ready_to_reboot', timeout=Timeouts.CONSOLE_VERIFICATION)
+            serial.expect('#', timeout=Timeouts.CONSOLE_VERIFICATION)
+            logger.debug("Console confirmed responsive, proceeding with reboot")
+        except Exception as e:
+            logger.warning(f"Console verification before reboot had issues: {e}")
+
+    def _send_reboot_command(self):
+        """Sends reboot command and deactivates shell."""
+        logger.info("Rebooting device to apply persistent network configuration")
+
+        try:
+            self.target.deactivate(self.shell)
+        except Exception as e:
+            logger.debug(f"Shell deactivation before reboot had issues (non-fatal): {e}")
+
+        try:
+            serial = self.target.get_driver("SerialDriver")
+            serial.sendline('reboot')
+            sleep(Timeouts.REBOOT_COMMAND_DELAY)
+        except Exception as e:
+            logger.warning(f"Reboot command had issues: {e}")
+
+    def _calculate_reboot_wait_time(self, is_libremesh):
+        """Calculates appropriate wait time for reboot based on firmware type."""
+        if is_libremesh:
+            return max(self.post_dhcp_wait, Timeouts.REBOOT_MINIMUM_LIBREMESH)
+        return max(self.post_dhcp_wait, Timeouts.REBOOT_MINIMUM_OPENWRT)
+
+    def _wait_for_network_initialization(self, is_libremesh):
+        """Waits for network to initialize after configuration without reboot."""
+        if is_libremesh:
+            wait_time = max(self.post_dhcp_wait, Timeouts.NETWORK_INIT_LIBREMESH)
+            logger.info(f"Waiting {wait_time}s for LibreMesh mesh network initialization (no reboot)")
+        else:
+            wait_time = max(self.post_dhcp_wait, Timeouts.NETWORK_INIT_OPENWRT)
+            logger.info(f"Waiting {wait_time}s for network reconfiguration (no reboot)")
+
+        sleep(wait_time)
 
     @step()
     def attempt_uboot_recovery(self, firmware_image: str):
@@ -361,7 +603,7 @@ class PhysicalDeviceStrategy(Strategy):
         uboot = self._get_uboot_driver()
         serial = self._get_serial_driver()
 
-        initramfs_filename = self._get_initramfs_filename(uboot, firmware_image)
+        initramfs_filename = self._extract_initramfs_filename(uboot, firmware_image)
         self._prepare_tftp_files(firmware_image, initramfs_filename)
 
         self._prepare_device_for_uboot()
@@ -384,7 +626,7 @@ class PhysicalDeviceStrategy(Strategy):
         except Exception as e:
             raise StrategyError(f"SerialDriver not available: {e}")
 
-    def _get_initramfs_filename(self, uboot, firmware_image):
+    def _extract_initramfs_filename(self, uboot, firmware_image):
         """Extracts initramfs filename from U-Boot configuration."""
         if hasattr(uboot, 'init_commands') and uboot.init_commands:
             for cmd in uboot.init_commands:
@@ -405,9 +647,13 @@ class PhysicalDeviceStrategy(Strategy):
             else:
                 logger.info(f"Initramfs already in TFTP root (up to date): {tftp_initramfs_path}")
         else:
-            logger.warning(f"Initramfs not found: {initramfs_path}, will try existing file in TFTP root")
-            if not os.path.exists(tftp_initramfs_path):
-                raise StrategyError(f"Initramfs not found in images dir or TFTP root: {initramfs_filename}")
+            self._verify_initramfs_exists_in_tftp(tftp_initramfs_path, initramfs_filename)
+
+    def _verify_initramfs_exists_in_tftp(self, tftp_path, filename):
+        """Verifies that initramfs file exists in TFTP root."""
+        logger.warning(f"Initramfs not found in images directory, checking TFTP root")
+        if not os.path.exists(tftp_path):
+            raise StrategyError(f"Initramfs not found in images dir or TFTP root: {filename}")
 
     def _should_copy_file(self, source_path, dest_path):
         """Checks if file needs to be copied based on modification time."""
@@ -424,14 +670,21 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info(f"Copying {file_description} to TFTP root: {dest_path}")
 
         try:
-            shutil.copy2(source_path, dest_path)
-            tftp_file_permissions = 0o644
-            os.chmod(dest_path, tftp_file_permissions)
+            self._copy_file_with_permissions(source_path, dest_path)
         except PermissionError:
-            logger.info(f"Using sudo to copy {file_description} (permission required)")
-            os.system(f"sudo cp {shlex.quote(source_path)} {shlex.quote(dest_path)}")
-            os.system(f"sudo chown tftp:tftp {shlex.quote(dest_path)}")
-            os.system(f"sudo chmod 644 {shlex.quote(dest_path)}")
+            self._copy_file_with_sudo(source_path, dest_path, file_description)
+
+    def _copy_file_with_permissions(self, source_path, dest_path):
+        """Copies file and sets appropriate permissions."""
+        shutil.copy2(source_path, dest_path)
+        os.chmod(dest_path, Permissions.TFTP_FILE)
+
+    def _copy_file_with_sudo(self, source_path, dest_path, file_description):
+        """Copies file using sudo when permissions are insufficient."""
+        logger.info(f"Using sudo to copy {file_description} (permission required)")
+        os.system(f"sudo cp {shlex.quote(source_path)} {shlex.quote(dest_path)}")
+        os.system(f"sudo chown tftp:tftp {shlex.quote(dest_path)}")
+        os.system(f"sudo chmod 644 {shlex.quote(dest_path)}")
 
     def _prepare_device_for_uboot(self):
         """Ensures device is powered off and drivers are deactivated."""
@@ -444,16 +697,19 @@ class PhysicalDeviceStrategy(Strategy):
 
     def _deactivate_shell_and_ssh(self):
         """Deactivates shell and SSH drivers to clear state."""
-        try:
-            if self.shell in self.target.active:
-                self.target.deactivate(self.shell)
-        except Exception:
-            pass
+        self._deactivate_driver_safely(self.shell)
 
         try:
             ssh = self.target.get_driver("SSHDriver", activate=False)
-            if ssh in self.target.active:
-                self.target.deactivate(ssh)
+            self._deactivate_driver_safely(ssh)
+        except Exception:
+            pass
+
+    def _deactivate_driver_safely(self, driver):
+        """Safely deactivates a driver without raising exceptions."""
+        try:
+            if driver in self.target.active:
+                self.target.deactivate(driver)
         except Exception:
             pass
 
@@ -464,11 +720,11 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info("Powering on device for U-Boot access")
         self.power.on()
 
-        self._interrupt_uboot(serial)
-        self._activate_and_boot_uboot(uboot)
-        self._wait_for_shell_after_uboot_boot(uboot)
+        self._interrupt_uboot_bootloader(serial)
+        self._load_and_boot_initramfs(uboot)
+        self._wait_for_shell_after_uboot_boot()
 
-    def _interrupt_uboot(self, serial):
+    def _interrupt_uboot_bootloader(self, serial):
         """Sends interrupt characters to catch U-Boot bootloader."""
         logger.info(f"Sending {self.uboot_interrupt_count} interrupt characters to catch U-Boot")
 
@@ -478,7 +734,7 @@ class PhysicalDeviceStrategy(Strategy):
 
         logger.info("Waiting for U-Boot prompt")
 
-    def _activate_and_boot_uboot(self, uboot):
+    def _load_and_boot_initramfs(self, uboot):
         """Activates U-Boot and boots the loaded initramfs."""
         self.target.activate(uboot)
         logger.info("U-Boot prompt acquired, TFTP download should be in progress")
@@ -490,30 +746,36 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info("U-Boot recovery: device booted from RAM, waiting for shell...")
         self.target.deactivate(uboot)
 
-    def _wait_for_shell_after_uboot_boot(self, uboot):
+    def _wait_for_shell_after_uboot_boot(self):
         """Waits for Linux shell to become available after U-Boot boot."""
         logger.info(f"Waiting up to {self.uboot_boot_wait}s for Linux shell after RAM boot...")
         self.status = Status.unknown
 
         for _ in range(self.uboot_boot_wait):
-            try:
-                if self._check_shell_active():
-                    self.target.activate(self.shell)
-                    logger.info("Shell access acquired after initramfs RAM boot")
-                    return
-            except Exception:
-                pass
+            if self._attempt_shell_activation():
+                logger.info("Shell access acquired after initramfs RAM boot")
+                return
             sleep(1)
 
         raise StrategyError("Failed to get shell after U-Boot initramfs boot")
+
+    def _attempt_shell_activation(self):
+        """Attempts to activate shell, returns True if successful."""
+        try:
+            if self._check_shell_active():
+                self.target.activate(self.shell)
+                return True
+        except Exception:
+            pass
+        return False
 
     def _persist_sysupgrade_firmware(self, firmware_image, uboot):
         """Persists sysupgrade firmware to flash after RAM boot."""
         logger.info("Persisting sysupgrade firmware to flash...")
 
         firmware_path = self._upload_sysupgrade_firmware(firmware_image, uboot)
-        self._run_sysupgrade(firmware_path)
-        self._wait_for_reboot_after_sysupgrade()
+        self._execute_sysupgrade(firmware_path)
+        self._wait_for_device_reboot_after_sysupgrade()
 
     def _upload_sysupgrade_firmware(self, firmware_image, uboot):
         """
@@ -523,12 +785,12 @@ class PhysicalDeviceStrategy(Strategy):
             str: Path to firmware on device
         """
         try:
-            return self._upload_via_ssh(firmware_image)
+            return self._upload_firmware_via_ssh(firmware_image)
         except Exception as e:
             logger.warning(f"SSH not available for upload: {e}")
-            return self._download_via_tftp(firmware_image, uboot)
+            return self._download_firmware_via_tftp(firmware_image, uboot)
 
-    def _upload_via_ssh(self, firmware_image):
+    def _upload_firmware_via_ssh(self, firmware_image):
         """Uploads firmware via SSH."""
         ssh = self.target.get_driver("SSHDriver", activate=False)
         self.target.activate(ssh)
@@ -538,27 +800,33 @@ class PhysicalDeviceStrategy(Strategy):
         ssh.put(firmware_image, device_firmware_path)
         return device_firmware_path
 
-    def _download_via_tftp(self, firmware_image, uboot):
+    def _download_firmware_via_tftp(self, firmware_image, uboot):
         """Downloads firmware via TFTP (fallback method)."""
         firmware_basename = os.path.basename(firmware_image)
         tftp_sysupgrade_path = os.path.join(self.tftp_root, firmware_basename)
 
-        if not os.path.exists(tftp_sysupgrade_path):
-            logger.info(f"Copying sysupgrade to TFTP root: {tftp_sysupgrade_path}")
-            shutil.copy2(firmware_image, tftp_sysupgrade_path)
-            os.system(f"sudo chown tftp:tftp {shlex.quote(tftp_sysupgrade_path)}")
-            os.system(f"sudo chmod 644 {shlex.quote(tftp_sysupgrade_path)}")
+        self._ensure_firmware_in_tftp_root(firmware_image, tftp_sysupgrade_path)
 
         logger.info("Trying to download sysupgrade via serial from TFTP...")
-
         serverip = self._extract_tftp_server_ip(uboot)
         logger.info(f"Downloading from TFTP server {serverip}")
 
+        return self._perform_tftp_download(firmware_basename, serverip)
+
+    def _ensure_firmware_in_tftp_root(self, source_path, tftp_path):
+        """Ensures firmware file exists in TFTP root directory."""
+        if not os.path.exists(tftp_path):
+            logger.info(f"Copying sysupgrade to TFTP root: {tftp_path}")
+            shutil.copy2(source_path, tftp_path)
+            os.system(f"sudo chown tftp:tftp {shlex.quote(tftp_path)}")
+            os.system(f"sudo chmod 644 {shlex.quote(tftp_path)}")
+
+    def _perform_tftp_download(self, firmware_basename, serverip):
+        """Performs TFTP download and returns device path."""
         try:
-            tftp_download_timeout = 60
             self.shell.run(
                 f"cd /tmp && tftp -g -r {firmware_basename} {serverip}",
-                timeout=tftp_download_timeout
+                timeout=Timeouts.TFTP_DOWNLOAD
             )
             return f"/tmp/{firmware_basename}"
         except Exception as download_error:
@@ -572,7 +840,7 @@ class PhysicalDeviceStrategy(Strategy):
 
         raise StrategyError("serverip not found in U-Boot init_commands")
 
-    def _run_sysupgrade(self, firmware_path):
+    def _execute_sysupgrade(self, firmware_path):
         """Executes sysupgrade command to persist firmware."""
         logger.info(f"Running sysupgrade -n -F {firmware_path} to persist firmware...")
 
@@ -582,28 +850,16 @@ class PhysicalDeviceStrategy(Strategy):
         except Exception as e:
             logger.info(f"Shell closed during sysupgrade (expected): {e}")
 
-    def _wait_for_reboot_after_sysupgrade(self):
+    def _wait_for_device_reboot_after_sysupgrade(self):
         """Waits for device to reboot after sysupgrade."""
-        reboot_start_delay = 10
         logger.info("Waiting for device to reboot after persistence...")
-        sleep(reboot_start_delay)
+        sleep(Timeouts.REBOOT_START_DELAY)
 
-        try:
-            self.target.deactivate(self.shell)
-        except Exception:
-            pass
-
-        try:
-            ssh = self.target.get_driver("SSHDriver", activate=False)
-            if ssh in self.target.active:
-                self.target.deactivate(ssh)
-        except Exception:
-            pass
-
+        self._deactivate_shell_and_ssh()
         self.status = Status.unknown
 
     @step()
-    def flash_firmware(self, image_path: str, keep_config: bool = False):
+    def flash_firmware(self, image_path: str, keep_config: bool = False, ensure_network: bool = True):
         """
         Flashes firmware and waits for device to boot.
 
@@ -612,6 +868,7 @@ class PhysicalDeviceStrategy(Strategy):
         Args:
             image_path: Path to firmware image file
             keep_config: If True, preserves device configuration
+            ensure_network: If True, ensures network is configured before flashing
 
         Raises:
             StrategyError: If flash and all recovery attempts fail
@@ -619,13 +876,31 @@ class PhysicalDeviceStrategy(Strategy):
         if self.status != Status.shell:
             self.transition("shell")
 
+        if ensure_network:
+            self._ensure_network_configured_before_flash()
+
+        self._perform_firmware_flash(image_path, keep_config)
+        self._attempt_boot_with_recovery(image_path)
+
+    def _ensure_network_configured_before_flash(self):
+        """Ensures network is configured for SSH access before attempting flash."""
+        logger.info("Ensuring network configuration before firmware upload")
+
+        try:
+            ssh = self.target.get_driver("SSHDriver", activate=False)
+            self.target.activate(ssh)
+            logger.info("SSH already available, skipping network configuration")
+        except Exception as e:
+            logger.info(f"SSH not available ({e}), configuring network via serial")
+            self.configure_libremesh_network(reboot_after=False)
+
+    def _perform_firmware_flash(self, image_path, keep_config):
+        """Performs the actual firmware flash operation."""
         sysupgrade = self._get_sysupgrade_driver()
         sysupgrade.flash(image_path, keep_config=keep_config)
 
         self._deactivate_drivers_after_flash()
         self.status = Status.unknown
-
-        self._attempt_boot_with_recovery(image_path)
 
     def _get_sysupgrade_driver(self):
         """Retrieves sysupgrade driver."""
@@ -654,22 +929,31 @@ class PhysicalDeviceStrategy(Strategy):
         recovery_attempt = 0
 
         while recovery_attempt <= self.max_recovery_attempts:
-            try:
-                logger.info(f"Attempting to establish shell connection (attempt {recovery_attempt + 1})")
-                self.transition("shell")
-                self.configure_libremesh_network()
-
+            if self._try_boot_and_configure(recovery_attempt):
                 logger.info("Firmware flash and reboot completed successfully")
                 return
 
-            except Exception as e:
-                logger.warning(f"Failed to establish shell after firmware flash: {e}")
+            if self._should_attempt_recovery(recovery_attempt):
+                self._perform_recovery_attempt(image_path, recovery_attempt)
+                recovery_attempt += 1
+            else:
+                raise StrategyError("Device failed to boot after firmware flash")
 
-                if self._should_attempt_recovery(recovery_attempt):
-                    self._perform_recovery_attempt(image_path, recovery_attempt)
-                    recovery_attempt += 1
-                else:
-                    raise StrategyError(f"Device failed to boot after firmware flash: {e}")
+    def _try_boot_and_configure(self, attempt_number):
+        """
+        Attempts to boot device and configure network.
+
+        Returns:
+            bool: True if successful, False if boot failed
+        """
+        try:
+            logger.info(f"Attempting to establish shell connection (attempt {attempt_number + 1})")
+            self.transition("shell")
+            self.configure_libremesh_network(reboot_after=True)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to establish shell after firmware flash: {e}")
+            return False
 
     def _should_attempt_recovery(self, current_attempt):
         """Determines if recovery should be attempted."""
@@ -684,10 +968,14 @@ class PhysicalDeviceStrategy(Strategy):
         except Exception as recovery_error:
             logger.error(f"U-Boot recovery attempt {attempt_number + 1} failed: {recovery_error}")
 
-            if attempt_number + 1 >= self.max_recovery_attempts:
+            if self._is_final_recovery_attempt(attempt_number):
                 raise StrategyError(
                     f"Device failed to boot after firmware flash and {self.max_recovery_attempts} recovery attempts"
                 )
+
+    def _is_final_recovery_attempt(self, attempt_number):
+        """Checks if this is the final recovery attempt."""
+        return attempt_number + 1 >= self.max_recovery_attempts
 
     @step()
     def provision_with_firmware(self, image_path: str, keep_config: bool = False, verify_version: str = None):
@@ -705,5 +993,9 @@ class PhysicalDeviceStrategy(Strategy):
         self.flash_firmware(image_path, keep_config=keep_config)
 
         if verify_version:
-            sysupgrade = self.target.get_driver("SysupgradeDriver")
-            sysupgrade.verify_version(verify_version)
+            self._verify_firmware_version(verify_version)
+
+    def _verify_firmware_version(self, expected_version):
+        """Verifies that the flashed firmware matches the expected version."""
+        sysupgrade = self.target.get_driver("SysupgradeDriver")
+        sysupgrade.verify_version(expected_version)
