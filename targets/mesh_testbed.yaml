@@ -1,0 +1,212 @@
+targets:
+  belkin_rt3200_1:
+    features:
+      - power
+      - libremesh
+
+    resources:
+      RawSerialPort:
+        port: "/dev/belkin-rt3200-1"
+        speed: 115200
+
+      NetworkService:
+        address: "192.168.20.182"
+        username: "root"
+
+    drivers:
+      ExternalPowerDriver:
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 2"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
+
+      SerialDriver:
+        txdelay: 0.01
+
+      ShellDriver:
+        prompt: '[\r\n]+.*?root@.*?#\s*'
+        login_prompt: 'Please press Enter to activate this console\.'
+        username: 'root'
+        await_login_timeout: 15
+        login_timeout: 120
+        post_login_settle_time: 5
+
+      SSHDriver:
+        connection_timeout: 30.0
+        explicit_scp_mode: False
+
+      # U-Boot driver for recovery
+      UBootDriver:
+        prompt: "MT7622>"
+        autoboot: "Press UP/DOWN to move"
+        interrupt: "0\n"
+        init_commands:
+          - setenv serverip 192.168.20.234
+          - setenv ipaddr 192.168.20.182
+          - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
+          - tftpboot 0x4007ff28
+        boot_command: bootm 0x4007ff28
+
+      SysupgradeDriver:
+        keep_config: false
+        allow_downgrade: false
+        verify_boot_timeout: 120
+        expected_board: "linksys,e8450-ubi"
+        skip_if_installed: false
+        tmp_space_margin_mb: 2
+
+      PhysicalDeviceStrategy:
+        requires_serial_disconnect: false
+        boot_wait: 30
+        connection_timeout: 30
+        smart_state_detection: true
+        enable_uboot_recovery: true
+        max_recovery_attempts: 2
+        tftp_root: "/srv/tftp"
+        # U-Boot recovery timing (device-specific)
+        uboot_interrupt_delay: 0.2        # Delay between interrupt chars (seconds)
+        uboot_interrupt_count: 15         # Number of interrupt chars to send
+        uboot_power_off_wait: 5           # Wait after power off (seconds)
+        uboot_boot_wait: 120              # Max wait for shell after RAM boot (seconds)
+        # Network configuration timing
+        post_dhcp_wait: 15                # Wait after network restart (seconds)
+        network_config_retry_wait: 1      # Wait between config commands (seconds)
+
+  belkin_rt3200_2:
+    features:
+      - power
+      - libremesh
+
+    resources:
+      RawSerialPort:
+        port: "/dev/belkin-rt3200-2"
+        speed: 115200
+
+      NetworkService:
+        address: "192.168.20.183"
+        username: "root"
+
+    drivers:
+      ExternalPowerDriver:
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 3"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 3"
+
+      SerialDriver:
+        txdelay: 0.01
+
+      ShellDriver:
+        prompt: '[\r\n]+.*?root@.*?#\s*'
+        login_prompt: 'Please press Enter to activate this console\.'
+        username: 'root'
+        await_login_timeout: 15
+        login_timeout: 120
+        post_login_settle_time: 5
+
+      SSHDriver:
+        connection_timeout: 30.0
+        explicit_scp_mode: False
+
+      # U-Boot driver for recovery
+      UBootDriver:
+        prompt: "MT7622>"
+        autoboot: "Press UP/DOWN to move"
+        interrupt: "0\n"
+        init_commands:
+          - setenv serverip 192.168.20.234
+          - setenv ipaddr 192.168.20.183
+          - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
+          - tftpboot 0x4007ff28
+        boot_command: bootm 0x4007ff28
+
+      SysupgradeDriver:
+        keep_config: false
+        allow_downgrade: false
+        verify_boot_timeout: 120
+        expected_board: "linksys,e8450-ubi"
+        skip_if_installed: false
+        tmp_space_margin_mb: 2
+
+      PhysicalDeviceStrategy:
+        requires_serial_disconnect: false
+        boot_wait: 30
+        connection_timeout: 30
+        smart_state_detection: true
+        enable_uboot_recovery: true
+        max_recovery_attempts: 2
+        tftp_root: "/srv/tftp"
+        # U-Boot recovery timing (device-specific)
+        uboot_interrupt_delay: 0.2        # Delay between interrupt chars (seconds)
+        uboot_interrupt_count: 15         # Number of interrupt chars to send
+        uboot_power_off_wait: 5           # Wait after power off (seconds)
+        uboot_boot_wait: 120              # Max wait for shell after RAM boot (seconds)
+        # Network configuration timing
+        post_dhcp_wait: 15                # Wait after network restart (seconds)
+        network_config_retry_wait: 1      # Wait between config commands (seconds)
+
+  gl_mt300n_v2:
+    features:
+      - power
+      - libremesh
+
+    resources:
+      RawSerialPort:
+        port: "/dev/glinet-mango"
+        speed: 115200
+      
+      SerialIsolatorResource:
+        device: "/dev/arduino-relay"
+        channel: 1
+        baudrate: 115200
+
+      NetworkService:
+        address: "192.168.20.181"
+        username: "root"
+        password: "bestpi4ever"
+
+    drivers:
+      ExternalPowerDriver:
+        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
+        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+
+      SerialIsolatorDriver: {}
+
+      SerialDriver:
+        txdelay: 0.05
+
+      ShellDriver:
+        prompt: '[\r\n]+.*?root@.*?#\s*'
+        login_prompt: 'Please press Enter to activate this console\.'
+        await_login_timeout: 15
+        login_timeout: 120
+        post_login_settle_time: 5
+        username: root
+
+      SSHDriver:
+        connection_timeout: 30.0
+        explicit_scp_mode: False
+
+      SysupgradeDriver:
+        keep_config: false
+        allow_downgrade: false
+        verify_boot_timeout: 90
+        expected_board: "glinet,gl-mt300n-v2"
+        skip_if_installed: false
+        tmp_space_margin_mb: 1
+
+      PhysicalDeviceStrategy:
+        requires_serial_disconnect: true
+        boot_wait: 30
+        connection_timeout: 90
+        smart_state_detection: true
+        
+        # U-Boot recovery (disabled - GL-iNet uses web-based recovery)
+        enable_uboot_recovery: false
+        max_recovery_attempts: 0
+        
+        # Network configuration timing (GL-iNet specific)
+        # LibreMesh mesh initialization (batman-adv) takes 90+ seconds for full SSH availability
+        post_dhcp_wait: 90  # Increased for LibreMesh mesh (batman-adv) and SSH initialization
+        network_config_retry_wait: 1
+
+imports:
+  - ../strategies/physicalstrategy.py
+  - ../drivers/sysupgrade_driver.py
+  - ../drivers/serial_isolator_driver.py
