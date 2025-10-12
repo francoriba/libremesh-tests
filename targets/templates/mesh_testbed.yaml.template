@@ -15,8 +15,8 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 2"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 2"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on 2"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off 2"
 
       SerialDriver:
         txdelay: 0.01
@@ -60,7 +60,7 @@ targets:
         smart_state_detection: true
         enable_uboot_recovery: true
         max_recovery_attempts: 2
-        tftp_root: "/srv/tftp"
+        tftp_root: "${HIL_TFTP_ROOT}"
         # U-Boot recovery timing (device-specific)
         uboot_interrupt_delay: 0.2        # Delay between interrupt chars (seconds)
         uboot_interrupt_count: 15         # Number of interrupt chars to send
@@ -86,8 +86,8 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py on 3"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py off 3"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on 3"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off 3"
 
       SerialDriver:
         txdelay: 0.01
@@ -131,7 +131,7 @@ targets:
         smart_state_detection: true
         enable_uboot_recovery: true
         max_recovery_attempts: 2
-        tftp_root: "/srv/tftp"
+        tftp_root: "${HIL_TFTP_ROOT}"
         # U-Boot recovery timing (device-specific)
         uboot_interrupt_delay: 0.2        # Delay between interrupt chars (seconds)
         uboot_interrupt_count: 15         # Number of interrupt chars to send
@@ -163,8 +163,8 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
 
       SerialIsolatorDriver: {}
 
@@ -210,3 +210,4 @@ imports:
   - ../strategies/physicalstrategy.py
   - ../drivers/sysupgrade_driver.py
   - ../drivers/serial_isolator_driver.py
+

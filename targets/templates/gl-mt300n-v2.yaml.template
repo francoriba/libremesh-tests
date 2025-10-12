@@ -20,8 +20,8 @@ targets:
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
-        cmd_off: "python3 /home/franco/pi/pi-hil-testing-utils/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
 
       SerialIsolatorDriver: {}
 
@@ -67,3 +67,4 @@ imports:
   - ../strategies/physicalstrategy.py
   - ../drivers/sysupgrade_driver.py
   - ../drivers/serial_isolator_driver.py
+
