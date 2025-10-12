@@ -125,12 +125,32 @@ $(curdir)/belkin_rt3200_2:
 		$(if $(filter 1,$(FLASH_FIRMWARE)),--flash-firmware,)
 
 $(curdir)/mesh_belkin_pair:
+	@echo "WARNING: mesh_belkin_pair is deprecated. Use mesh_testbed instead."
 	@echo "Running mesh tests on Belkin RT3200 pair..."
 	@echo "Make sure both devices are connected via serial and Arduino relay"
 	KEEP_DUT_ON=$(KEEP_DUT_ON) \
 	RESET_ALL_DUTS=$(RESET_ALL_DUTS) \
 	SUITE_OPTIMIZATION=$(SUITE_OPTIMIZATION) \
 	$(pytest) \
-		--lg-env $(TESTSDIR)/targets/mesh_belkin_pair.yaml \
+		--lg-env $(TESTSDIR)/targets/mesh_testbed.yaml \
 		--lg-log \
 		--log-cli-level=DEBUG
+
+$(curdir)/mesh_testbed: FIRMWARE_BELKIN1 ?=
+$(curdir)/mesh_testbed: FIRMWARE_BELKIN2 ?=
+$(curdir)/mesh_testbed: FIRMWARE_GLINET ?=
+$(curdir)/mesh_testbed: FLASH_FIRMWARE ?= 0
+$(curdir)/mesh_testbed:
+	@echo "Running mesh tests on full testbed (2 Belkin RT3200 + 1 GL-iNet MT300N-V2)..."
+	@echo "Make sure all 3 devices are connected via serial and Arduino relay"
+	KEEP_DUT_ON=$(KEEP_DUT_ON) \
+	RESET_ALL_DUTS=$(RESET_ALL_DUTS) \
+	SUITE_OPTIMIZATION=$(SUITE_OPTIMIZATION) \
+	$(pytest) \
+		--lg-env $(TESTSDIR)/targets/mesh_testbed.yaml \
+		--lg-log \
+		--log-cli-level=INFO \
+		$(if $(FIRMWARE_BELKIN1),--firmware belkin_rt3200_1=$(FIRMWARE_BELKIN1),) \
+		$(if $(FIRMWARE_BELKIN2),--firmware belkin_rt3200_2=$(FIRMWARE_BELKIN2),) \
+		$(if $(FIRMWARE_GLINET),--firmware gl_mt300n_v2=$(FIRMWARE_GLINET),) \
+		$(if $(filter 1,$(FLASH_FIRMWARE)),--flash-firmware,)
