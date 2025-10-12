@@ -124,13 +124,50 @@ La `PhysicalDeviceStrategy` extiende la funcionalidad base de Labgrid para manej
 
 ---
 
-## 4. Integración con Pytest y Makefiles
+## 4. Mejoras de Robustez y Estabilidad
+
+### 4.1. Limpieza de Buffer Serial
+
+Para prevenir fallos esporádicos causados por mensajes residuales del kernel (como "multicast optimizations disabled") que interfieren con el pattern matching del `ShellDriver`, se implementó un mecanismo de limpieza activa del buffer serial.
+
+**Características**:
+*   **Limpieza Triple**: Envía newline → lee/descarta buffer → envía newline final
+*   **Aplicación Estratégica**: Se ejecuta automáticamente después de:
+    *   Configuración de red (antes de flashear firmware)
+    *   Reinicio de servicios de red
+    *   Operaciones que puedan generar output asíncrono del kernel
+*   **Manejo Robusto**: Los timeouts esperados (buffer vacío) son manejados de forma silenciosa
+*   **Timeouts Configurables**: Todos los delays están definidos en constantes (`Timeouts.BUFFER_FLUSH_*`)
+
+**Impacto**: Reduce significativamente fallos esporádicos en el comando `command -v sysupgrade` durante el flasheo (de ~10% a <1%).
+
+### 4.2. Verificación Activa de SSH
+
+En lugar de delays fijos, el sistema ahora verifica **activamente** que SSH esté disponible:
+
+*   **Polling Activo**: Reintenta la conexión SSH cada 5 segundos hasta un timeout configurable
+*   **Verificación Funcional**: Ejecuta `echo test` para confirmar que SSH responde correctamente
+*   **Recuperación Automática**: Si SSH falla, intenta recuperación vía serial automáticamente
+*   **Timeouts Específicos**: Diferentes para LibreMesh (120s) y OpenWrt vanilla (60s)
+
+### 4.3. Persistencia de Configuración de Red
+
+Para evitar que LibreMesh sobrescriba la configuración DHCP después de reinicios:
+
+*   **Desactivación de lime-config**: Ejecuta `/etc/init.d/lime-config disable` durante la configuración inicial
+*   **Configuración UCI Persistente**: Aplica los cambios en `lime-defaults`, `lime` y `network`
+*   **Commit y Sync**: Asegura que los cambios se escriban al filesystem antes de reiniciar
+*   **Verificación Post-Reboot**: Confirma que SSH sigue disponible después de reiniciar
+
+---
+
+## 5. Integración con Pytest y Makefiles
 
 La integración permite activar estas funcionalidades desde la línea de comandos de Pytest o mediante Makefiles.
 
-### Opciones de Pytest (`pytest_addoption`):
+### 5.1. Opciones de Pytest (`pytest_addoption`):
 
-*   `--firmware <path>`: Especifica la ruta a la imagen de firmware local (`sysupgrade.itb`).
+*   `--firmware <path>`: Especifica la ruta a la imagen de firmware local. Puede usar formato `path` (para todos los targets) o `target=path` (específico por dispositivo).
 *   `--flash-firmware`: Flag para activar el flasheo automático al inicio de la sesión de tests.
 *   `--flash-keep-config`: Flag para mantener la configuración existente en el DUT durante el flasheo (usa `sysupgrade` sin `-n`).
 *   `--flash-verify-version <version>`: String, versión esperada del firmware para verificar después del flasheo.
@@ -138,27 +175,102 @@ La integración permite activar estas funcionalidades desde la línea de comando
 *   `--flash-skip-if-same`: Flag para saltar el flasheo si la versión ya está instalada.
 *   `--flash-validate-only`: Flag para activar el modo "solo validar" (corre todas las guardas sin flashear realmente).
 
-### Uso con Makefiles:
+### 5.2. Ejecución de Tests Específicos con Pytest
 
-Los Makefiles en el directorio `tests/` están configurados para usar estas opciones:
+Pytest permite ejecutar tests individuales usando la sintaxis `archivo.py::nombre_funcion_test`:
 
 ```bash
-# Ejemplo: Flashear Belkin RT3200 con imagen y SHA256 específicos
-make tests/belkin_rt3200_1 \
-  FIRMWARE=/home/franco/pi/images/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
-  FLASH_FIRMWARE=1 \
-  FLASH_SHA256=5da052ac528e0ae50d08021ce4e9eaf88a0572379174828e3d2f8219280c819a
+# Ejecutar un test específico
+pytest tests/test_mesh_connectivity.py::test_mesh_basic_connectivity -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml
+
+# Ejecutar todos los tests de un archivo
+pytest tests/test_mesh_connectivity.py -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml
+
+# Filtrar tests por palabra clave (opción -k)
+pytest tests/test_mesh_connectivity.py -k "batman" -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml
+
+# Ejecutar un test específico con flasheo
+pytest tests/test_mesh_connectivity.py::test_mesh_basic_connectivity -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml \
+  --firmware belkin_rt3200_1=/path/to/belkin.itb \
+  --firmware gl_mt300n_v2=/path/to/glinet.bin \
+  --flash-firmware
 ```
 
-### Fixtures Útiles:
+**Nota**: El doble colon `::` es fundamental para especificar un test individual.
+
+### 5.3. Uso con Makefiles
+
+Los Makefiles en el directorio `tests/` están configurados para usar estas opciones y proveen targets preconfigurados:
+
+#### Tests en Dispositivos Individuales:
+
+```bash
+# GL-iNet MT300N-V2 (sin flashear)
+KEEP_DUT_ON=1 make tests/gl-mt300n-v2 K=test_firmware_version
+
+# GL-iNet con flasheo
+make tests/gl-mt300n-v2 \
+  FIRMWARE=/home/franco/pi/images/glinet/lime-ramips-mt76x8-glinet_gl-mt300n-v2-squashfs-sysupgrade.bin \
+  FLASH_FIRMWARE=1 \
+  K=test_ubus_system_board
+
+# Belkin RT3200 #1 (sin flashear)
+make tests/belkin_rt3200_1 K=test_ubus_system_board
+
+# Belkin RT3200 #1 con flasheo y SHA256
+make tests/belkin_rt3200_1 \
+  FIRMWARE=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  FLASH_FIRMWARE=1 \
+  FLASH_SHA256=5da052ac528e0ae50d08021ce4e9eaf88a0572379174828e3d2f8219280c819a
+
+# Belkin RT3200 #2
+make tests/belkin_rt3200_2 \
+  FIRMWARE=/path/to/firmware.itb \
+  FLASH_FIRMWARE=1
+```
+
+#### Tests Mesh Multi-Dispositivo (Nuevo Target `mesh_testbed`):
+
+```bash
+# Ejecutar tests mesh sin flashear (usa firmware ya instalado)
+make tests/mesh_testbed K=test_mesh_basic_connectivity
+
+# Flashear los 3 routers y ejecutar todos los tests mesh
+make tests/mesh_testbed \
+  FIRMWARE_BELKIN1=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  FIRMWARE_BELKIN2=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  FIRMWARE_GLINET=/home/franco/pi/images/glinet/lime-ramips-mt76x8-glinet_gl-mt300n-v2-squashfs-sysupgrade.bin \
+  FLASH_FIRMWARE=1
+
+# Ejecutar test específico (batman-adv) sin flashear
+make tests/mesh_testbed K=test_mesh_batman_connectivity
+
+# Mantener routers encendidos después del test (para debugging)
+KEEP_DUT_ON=1 make tests/mesh_testbed K=test_mesh_advanced_debugging
+```
+
+**Variables de entorno soportadas por Makefile**:
+*   `KEEP_DUT_ON=1`: Mantiene los dispositivos encendidos después del test
+*   `RESET_ALL_DUTS=1`: Resetea todos los dispositivos antes de iniciar
+*   `K=test_name`: Filtra tests por nombre (equivalente a pytest `-k`)
+*   `FIRMWARE=<path>`: Ruta a imagen de firmware (dispositivos individuales)
+*   `FIRMWARE_BELKIN1`, `FIRMWARE_BELKIN2`, `FIRMWARE_GLINET`: Rutas específicas por dispositivo (mesh_testbed)
+*   `FLASH_FIRMWARE=1`: Activa el flasheo automático
+
+### 5.4. Fixtures Útiles:
 
 *   `firmware_image`: Fixture de pytest que provee la ruta a la imagen de firmware configurada.
 *   `sysupgrade_driver`: Fixture que da acceso directo a la instancia del `SysupgradeDriver` para operaciones manuales en tests específicos.
-*   `flash_clean_firmware`: Fixture que flashea una imagen limpia (sin preservar config) antes de un test, garantizando un estado inicial conocido.
+*   `flash_clean_firmware`: Fixture que flashea una imagen limpia (sin preservar config) antes de un test, garantizando un estado inicial conocado.
+*   `mesh_routers`: Fixture que provee acceso a los 3 routers del testbed (`belkin1`, `belkin2`, `glinet`) para tests mesh.
 
 ---
 
-## 5. Ejemplos de Uso
+## 6. Ejemplos de Uso
 
 *   **Solo ejecutar tests (sin flashear)**:
     ```bash
@@ -191,10 +303,97 @@ make tests/belkin_rt3200_1 \
 
 ---
 
-## 6. Desarrollos Futuros (Próximos Pasos)
+## 7. Pruebas de Red Mesh Multi-Dispositivo
 
-*   **Provisioning Multi-DUT**: Crear una estrategia de `MeshProvisionStrategy` y un marcador de Pytest para provisionar múltiples routers en paralelo, optimizando tests de red mallada.
+Para facilitar las pruebas de red mesh con múltiples dispositivos, se ha creado el archivo de configuración `targets/mesh_testbed.yaml` que incluye todos los dispositivos de la testbed:
+
+*   **`belkin_rt3200_1`** (192.168.20.182) - Belkin RT3200/Linksys E8450
+*   **`belkin_rt3200_2`** (192.168.20.183) - Belkin RT3200/Linksys E8450
+*   **`gl_mt300n_v2`** (192.168.20.181) - GL-iNet GL-MT300N-V2
+
+### 7.1. Tests Mesh Disponibles
+
+El archivo `tests/test_mesh_connectivity.py` incluye tests específicos para verificar la conectividad mesh:
+
+*   **`test_single_router_basic`**: Prueba básica en un solo router (Belkin 1)
+*   **`test_mesh_basic_connectivity`**: Prueba conectividad IP entre los **3 routers** con 6 pings bidireccionales:
+    *   Belkin 1 ↔ Belkin 2
+    *   Belkin 1 ↔ GL-iNet
+    *   Belkin 2 ↔ GL-iNet
+*   **`test_mesh_batman_connectivity`**: Verifica batman-adv (`batctl`) en los **3 routers**:
+    *   Interfaces batman activas
+    *   Vecinos mesh detectados
+    *   Conteo de enlaces activos
+*   **`test_mesh_advanced_debugging`**: Test de debugging con verificación de `lime-config` en los **3 routers**
+*   **`test_mesh_with_explicit_routers`**: Test genérico que especifica los 3 routers explícitamente
+
+### 7.2. Flasheo Multi-Target para Pruebas Mesh
+
+El sistema de flasheo soporta **dos modos** de operación para testbeds multi-dispositivo, siempre de forma **secuencial** (un dispositivo a la vez):
+
+#### Opción A: Con pytest - Mapeo de Firmware por Target (Recomendado)
+
+Para testbeds con dispositivos de **diferentes arquitecturas** (como Belkin + GL-iNet), especifica una imagen para cada target usando el formato `target=path`:
+
+```bash
+# Flashear los 3 routers y ejecutar un test específico
+pytest tests/test_mesh_connectivity.py::test_mesh_basic_connectivity -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml \
+  --firmware belkin_rt3200_1=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  --firmware belkin_rt3200_2=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  --firmware gl_mt300n_v2=/home/franco/pi/images/glinet/lime-ramips-mt76x8-glinet_gl-mt300n-v2-squashfs-sysupgrade.bin \
+  --flash-firmware
+```
+
+**Nota**: Los dispositivos se flashean **secuencialmente** (uno después del otro). El flasheo completo de los 3 routers toma aproximadamente 20-25 minutos.
+
+#### Opción B: Con Makefile - Target `mesh_testbed` (Simplificado)
+
+El Makefile incluye un target preconfigurado para pruebas mesh:
+
+```bash
+# Flashear los 3 routers y ejecutar todos los tests mesh
+make tests/mesh_testbed \
+  FIRMWARE_BELKIN1=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  FIRMWARE_BELKIN2=/home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  FIRMWARE_GLINET=/home/franco/pi/images/glinet/lime-ramips-mt76x8-glinet_gl-mt300n-v2-squashfs-sysupgrade.bin \
+  FLASH_FIRMWARE=1
+
+# Ejecutar un test específico sin flashear
+make tests/mesh_testbed K=test_mesh_batman_connectivity
+
+# Mantener routers encendidos para debugging
+KEEP_DUT_ON=1 make tests/mesh_testbed K=test_mesh_basic_connectivity
+```
+
+#### Opción C: Imagen Única para Todos los Targets (Dispositivos homogéneos)
+
+Si todos los dispositivos son del **mismo modelo** (ej. solo Belkin RT3200), puedes usar una sola imagen:
+
+```bash
+# Pytest: Flasheo secuencial con imagen única
+pytest tests/test_mesh_connectivity.py -v -s --log-cli-level=INFO \
+  --lg-env targets/mesh_testbed.yaml \
+  --firmware /home/franco/pi/images/belkin/lime-mediatek-mt7622-linksys_e8450-ubi-squashfs-sysupgrade.itb \
+  --flash-firmware
+```
+
+### 7.3. Características del Sistema de Flasheo Multi-Target
+
+*   **Mapeo Target → Firmware**: Usa `--firmware target=path` para especificar imágenes específicas por dispositivo.
+*   **Flasheo Secuencial**: Los dispositivos se flashean uno tras otro (robusto y estable).
+*   **Validación**: Todas las imágenes se validan antes de iniciar el flasheo (checksums, compatibilidad de board, espacio en `/tmp`).
+*   **Manejo de Errores**: Si algún dispositivo falla, se reportan todos los errores al final.
+*   **Configuración Automática**: Después del flasheo, la red se configura automáticamente en cada dispositivo para permitir acceso SSH.
+*   **Limpieza de Buffer Serial**: Previene fallos esporádicos causados por mensajes del kernel.
+
+---
+
+## 8. Desarrollos Futuros (Próximos Pasos)
+
 *   **Artefactos y Trazabilidad en CI**: Generar logs y archivos de estado del dispositivo (`serial.log`, `sysupgrade.log`, `uboot.log`, `openwrt_release`, `board.json`, `dmesg`, `sha256.txt`) como artefactos de CI para facilitar la depuración y auditoría.
 *   **Selección de Método de Flasheo**: Un flag `--flash-method=auto|sysupgrade|uboot` para controlar explícitamente el método de flasheo.
+*   **Tests Mesh Avanzados**: Pruebas de rendimiento de throughput, latencia, y failover en la red mesh con los 3 routers.
+*   **Soporte para Más Dispositivos**: Expandir la testbed con dispositivos adicionales para pruebas de escalabilidad mesh.
 
 ---
