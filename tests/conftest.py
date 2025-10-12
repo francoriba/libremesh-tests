@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 device = getenv("LG_ENV", "Unknown").split("/")[-1].split(".")[0]
 
 
+class VWiFiTimeouts:
+    """Timeouts for virtual WiFi (vwifi) setup operations."""
+    VWIFI_START_WAIT = 5       # Wait after starting vwifi client
+    WIFI_RELOAD_WAIT = 10      # Wait after wifi reload/up
+    IW_DEVICE_POLL_INTERVAL = 2  # Interval for polling iw devices
+
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
@@ -157,16 +164,16 @@ def upload_vwifi(shell_command,target):
         '"""
     ssh.run_check(cmd)
     assert "\n".join(ssh.run("ps | grep vwifi")[0]) != ""
-    time.sleep(5)
+    time.sleep(VWiFiTimeouts.VWIFI_START_WAIT)
     ssh.run("wifi reload")
     ssh.run("wifi up")
-    time.sleep(10)
+    time.sleep(VWiFiTimeouts.WIFI_RELOAD_WAIT)
     phy_devices = ssh.run("iw phy | grep phy")[0]
     assert len(phy_devices) == 4 #labgrid tokenize \t 
     iw_devices = "\n".join(ssh.run("iw dev")[0])                                      
     while "wlan0-mesh" not in iw_devices:                                                     
         iw_devices = "\n".join(ssh.run("iw dev")[0])                                  
-        time.sleep(2)                                                                         
+        time.sleep(VWiFiTimeouts.IW_DEVICE_POLL_INTERVAL)                                                                         
     stations = "\n".join(ssh.run("iw dev wlan0-mesh station dump")[0])                
     assert "02:00:00:00:00:01" in stations                                                    
     assert "02:00:00:00:00:02" in stations                                                    
