@@ -56,6 +56,11 @@ class Timeouts:
     SSH_RECOVERY_NETWORK_SETTLE = 15
     SSH_RECOVERY_DHCP_REQUEST_WAIT = 10
     SSH_RECOVERY_DROPBEAR_RESTART_WAIT = 3
+    
+    # Serial buffer flush timeouts
+    BUFFER_FLUSH_INITIAL_WAIT = 0.5
+    BUFFER_FLUSH_FINAL_WAIT = 0.3
+    BUFFER_FLUSH_EXPECT_TIMEOUT = 0.5
 
 
 class Indices:
@@ -431,12 +436,39 @@ class PhysicalDeviceStrategy(Strategy):
         logger.info("Network configuration via serial completed")
 
     def _flush_serial_buffer(self):
-        """Flushes serial buffer before network configuration."""
+        """
+        Flushes serial buffer to remove residual kernel messages and output.
+        
+        This is critical after network configuration or service restarts, as the
+        kernel may emit messages (like "optimizations disabled") that interfere
+        with subsequent shell pattern matching.
+        
+        The method performs a three-step flush:
+        1. Sends newline to reach a clean prompt
+        2. Reads and discards all buffered content
+        3. Sends final newline to stabilize the prompt state
+        """
         try:
             serial = self.target.get_driver("SerialDriver")
-            logger.debug("Flushing serial buffer before network config")
+            logger.debug("Flushing serial buffer to clear residual output")
+            
+            # Send a newline to ensure we're at a clean prompt
             serial.sendline("")
-            sleep(Timeouts.BUFFER_FLUSH)
+            sleep(Timeouts.BUFFER_FLUSH_INITIAL_WAIT)
+            
+            # Read and discard everything in the buffer
+            try:
+                # Set a very short timeout to just consume what's in the buffer
+                serial._expect.expect('.+', timeout=Timeouts.BUFFER_FLUSH_EXPECT_TIMEOUT)
+            except:
+                # Timeout is expected when buffer is empty - this is fine
+                pass
+            
+            # Send another newline and wait for clean prompt
+            serial.sendline("")
+            sleep(Timeouts.BUFFER_FLUSH_FINAL_WAIT)
+            
+            logger.debug("Serial buffer flushed successfully")
         except Exception as e:
             logger.warning(f"Could not flush serial buffer: {e}")
 
@@ -1149,6 +1181,11 @@ class PhysicalDeviceStrategy(Strategy):
         # even if SSH is temporarily available from previous firmware
         logger.info("Configuring network via serial to ensure clean state before flash")
         self.configure_libremesh_network(reboot_after=False)
+        
+        # Clean serial buffer to prevent spurious kernel messages from interfering
+        # with subsequent shell commands (especially after network restart/sync)
+        self._flush_serial_buffer()
+        logger.debug("Serial buffer flushed after network configuration")
 
     def _perform_firmware_flash(self, image_path, keep_config):
         """Performs the actual firmware flash operation."""
