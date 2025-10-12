@@ -48,7 +48,9 @@ def pytest_runtest_makereport(item, call):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--firmware", action="store", default="firmware.bin")
+    parser.addoption("--firmware", action="append", default=[],
+                     help="Firmware image path. Can be: single path, or 'target=path' for target-specific mapping. "
+                          "Can be specified multiple times for different targets.")
     parser.addoption("--flash-firmware", action="store_true", 
                      help="Flash firmware before running tests")
     parser.addoption("--flash-keep-config", action="store_true",
@@ -106,9 +108,9 @@ def ubus_call(command, namespace, method, params={}):
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_env(env, pytestconfig):
-    env.config.data.setdefault("images", {})["firmware"] = pytestconfig.getoption(
-        "firmware"
-    )
+    firmware_list = pytestconfig.getoption("firmware")
+    # Store the first firmware in the list for backward compatibility
+    env.config.data.setdefault("images", {})["firmware"] = firmware_list[0] if firmware_list else None
 
 
 @pytest.fixture
@@ -247,28 +249,50 @@ def belkin2_shell(env):
 @pytest.fixture
 def glinet_shell(env):
     """Shell del GL-iNet MT300N-V2."""
-    target = env.get_target("gl-mt300n-v2")
+    target = env.get_target("gl_mt300n_v2")
     strategy = target.get_driver("PhysicalDeviceStrategy")
     strategy.transition("shell")
     return strategy.shell
 
 
 @pytest.fixture
-def mesh_routers(belkin1_shell, belkin2_shell):
-    """Fixture para tests que requieren múltiples routers."""
+def mesh_routers(belkin1_shell, belkin2_shell, glinet_shell):
+    """Fixture para tests que requieren múltiples routers (2 Belkins + 1 GL-iNet)."""
     return {
         "belkin1": belkin1_shell,
-        "belkin2": belkin2_shell
+        "belkin2": belkin2_shell,
+        "glinet": glinet_shell
     }
 
 
 @pytest.fixture(scope="session")
 def firmware_image(pytestconfig):
-    """Obtiene la ruta de la imagen de firmware desde --firmware o variable de entorno."""
-    firmware = pytestconfig.getoption("firmware")
-    if not firmware or not os.path.exists(firmware):
-        pytest.skip(f"Firmware image not found: {firmware}")
-    return firmware
+    """
+    Returns firmware path for single-target tests.
+    For multi-target tests with target-specific mapping, use the flash_firmware_if_requested fixture.
+    """
+    firmware_list = pytestconfig.getoption("firmware")
+    if not firmware_list:
+        pytest.skip("No firmware specified. Use --firmware")
+    
+    # If multiple firmwares specified, try to find a non-mapped one (default)
+    default_firmware = None
+    for fw_spec in firmware_list:
+        if "=" not in fw_spec:
+            default_firmware = fw_spec
+            break
+    
+    # If no default, use the first one (could be a mapping)
+    if not default_firmware:
+        if "=" in firmware_list[0]:
+            pytest.skip("Multiple target-specific firmwares specified, but no default. "
+                       "This fixture is for single-target tests only.")
+        default_firmware = firmware_list[0]
+    
+    if not os.path.exists(default_firmware):
+        pytest.skip(f"Firmware image not found: {default_firmware}")
+    
+    return default_firmware
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -276,21 +300,55 @@ def flash_firmware_if_requested(env, pytestconfig):
     """
     Automatically flashes firmware to all targets if --flash-firmware flag is provided.
     
-    This fixture runs once per test session before any tests execute.
+    Supports:
+    - Single firmware for all targets
+    - Target-specific firmware mapping (target=path)
+    - Sequential flashing (one device at a time)
     
     Usage:
-        pytest --lg-env targets/belkin_rt3200_1.yaml \
-               --firmware /path/to/image.bin \
-               --flash-firmware \
-               --flash-sha256 abc123... \
-               --flash-skip-if-same
+        # Single firmware for all targets (homogeneous testbed)
+        pytest --lg-env targets/device.yaml --firmware /path/to/image.bin --flash-firmware
+        
+        # Target-specific mapping (heterogeneous testbed)
+        pytest --lg-env targets/mesh_testbed.yaml \
+               --firmware belkin_rt3200_1=/path/to/belkin.itb \
+               --firmware belkin_rt3200_2=/path/to/belkin.itb \
+               --firmware gl_mt300n_v2=/path/to/glinet.bin \
+               --flash-firmware
     """
     if not pytestconfig.getoption("flash_firmware", default=False):
         return
     
-    firmware = pytestconfig.getoption("firmware")
-    if not firmware or not os.path.exists(firmware):
-        pytest.fail(f"Cannot flash: firmware image not found: {firmware}")
+    firmware_list = pytestconfig.getoption("firmware")
+    if not firmware_list:
+        pytest.fail("Cannot flash: no firmware specified. Use --firmware")
+    
+    # Parse firmware mapping: either "path" or "target=path"
+    firmware_map = {}
+    default_firmware = None
+    
+    for fw_spec in firmware_list:
+        if "=" in fw_spec:
+            # Target-specific: "target=path"
+            target_name, fw_path = fw_spec.split("=", 1)
+            firmware_map[target_name] = fw_path
+        else:
+            # Default firmware for all targets
+            default_firmware = fw_spec
+    
+    # Build final mapping for each target
+    for name in env.targets.keys():
+        if name not in firmware_map:
+            if default_firmware:
+                firmware_map[name] = default_firmware
+            else:
+                pytest.fail(f"No firmware specified for target '{name}'. "
+                           f"Use --firmware {name}=/path/to/image.bin")
+    
+    # Validate all firmware files exist
+    for name, fw_path in firmware_map.items():
+        if not os.path.exists(fw_path):
+            pytest.fail(f"Firmware image not found for target '{name}': {fw_path}")
     
     keep_config = pytestconfig.getoption("flash_keep_config", default=False)
     verify_version = pytestconfig.getoption("flash_verify_version", default=None)
@@ -298,59 +356,70 @@ def flash_firmware_if_requested(env, pytestconfig):
     skip_if_same = pytestconfig.getoption("flash_skip_if_same", default=False)
     validate_only = pytestconfig.getoption("flash_validate_only", default=False)
     
-    logger.info(f"Session firmware flash requested: {firmware}")
+    logger.info(f"Session firmware flash requested for {len(firmware_map)} target(s)")
     logger.info(f"  keep_config={keep_config}, skip_if_same={skip_if_same}, validate_only={validate_only}")
     if expected_sha256:
         logger.info(f"  SHA256: {expected_sha256}")
+    for name, fw_path in firmware_map.items():
+        logger.info(f"  {name}: {fw_path}")
+    
+    # Flash targets sequentially (one at a time)
+    logger.info("Starting SEQUENTIAL firmware flash")
+    failures = []
     
     for name, target in env.targets.items():
+        firmware_path = firmware_map[name]
         try:
-            # Get ONLY strategy first (don't get sysupgrade yet, it has ShellDriver binding)
+            # Get strategy first
             strategy = target.get_driver("PhysicalDeviceStrategy")
             
             # Ensure device is powered on and shell is available
-            # power on the device if needed
-            logger.info(f"Ensuring device '{name}' is powered on and shell is available")
+            logger.info(f"[{name}] Ensuring device is powered on and shell is available")
             strategy.transition("shell")
             
-            # get sysupgrade driver (shell is already active, so binding won't cause issues)
+            # Get sysupgrade driver (shell is already active)
             sysupgrade = target.get_driver("SysupgradeDriver")
             
             # Configure skip behavior
             original_skip = sysupgrade.skip_if_installed
             sysupgrade.skip_if_installed = skip_if_same
             
-            logger.info(f"Processing firmware for target '{name}'")
+            logger.info(f"[{name}] Processing firmware: {firmware_path}")
             
             if validate_only:
                 # Validate-only mode: run all checks without flashing
-                logger.info(f"Running validation-only mode on '{name}'")
+                logger.info(f"[{name}] Running validation-only mode")
                 sysupgrade.flash(
-                    firmware,
+                    firmware_path,
                     keep_config=keep_config,
                     expected_sha256=expected_sha256,
                     expected_version=verify_version,
                     validate_only=True
                 )
-                logger.info(f"Validation completed successfully on target '{name}'")
+                logger.info(f"[{name}] Validation completed successfully")
             else:
                 # Full flash with provisioning (includes network config)
-                logger.info(f"Flashing firmware on target '{name}'")
+                logger.info(f"[{name}] Flashing firmware")
                 strategy.provision_with_firmware(
-                    image_path=firmware,
+                    image_path=firmware_path,
                     keep_config=keep_config,
                     verify_version=verify_version
                 )
-                logger.info(f"Firmware flash completed successfully on target '{name}'")
+                logger.info(f"[{name}] Firmware flash completed successfully")
             
             # Restore original skip setting
             sysupgrade.skip_if_installed = original_skip
             
         except Exception as e:
-            logger.error(f"Failed to process firmware on target '{name}': {e}")
+            logger.error(f"[{name}] Failed to process firmware: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            pytest.fail(f"Firmware processing failed on '{name}': {e}")
+            failures.append((name, str(e)))
+    
+    # Check if any failures occurred
+    if failures:
+        failure_msg = "\n".join([f"  - {name}: {error}" for name, error in failures])
+        pytest.fail(f"Firmware flash failed on {len(failures)} target(s):\n{failure_msg}")
 
 
 @pytest.fixture
