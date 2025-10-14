@@ -48,8 +48,8 @@ detect_hil_utils_path() {
 
 detect_images_path() {
     local candidates=(
-        "$WORKSPACE_ROOT/../images"
-        "$HOME/pi/images"
+        "$WORKSPACE_ROOT/../pi-hil-testing-utils/firmwares"
+        "$HOME/pi/pi-hil-testing-utils/firmwares"
         "/opt/openwrt-images"
     )
     

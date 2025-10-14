@@ -24,11 +24,11 @@ fi
 
 # Auto-detect images directory (sibling directory)
 if [ -z "$HIL_IMAGES_PATH" ]; then
-    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../images" 2>/dev/null && pwd)"
+    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../pi-hil-testing-utils/firmwares" 2>/dev/null && pwd)"
     if [ -d "$HIL_IMAGES_CANDIDATE" ]; then
         export HIL_IMAGES_PATH="$HIL_IMAGES_CANDIDATE"
     else
-        export HIL_IMAGES_PATH="$HOME/pi/images"
+        export HIL_IMAGES_PATH="$HOME/pi/pi-hil-testing-utils/firmwares"
     fi
 fi
 
