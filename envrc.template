@@ -24,11 +24,11 @@ fi
 
 # Auto-detect images directory (sibling directory)
 if [ -z "$HIL_IMAGES_PATH" ]; then
-    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../pi-hil-testing-utils/firmwares" 2>/dev/null && pwd)"
+    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../images" 2>/dev/null && pwd)"
     if [ -d "$HIL_IMAGES_CANDIDATE" ]; then
         export HIL_IMAGES_PATH="$HIL_IMAGES_CANDIDATE"
     else
-        export HIL_IMAGES_PATH="$HOME/pi/pi-hil-testing-utils/firmwares"
+        export HIL_IMAGES_PATH="$HOME/pi/images"
     fi
 fi
 
@@ -36,6 +36,64 @@ fi
 if [ -z "$HIL_TFTP_ROOT" ]; then
     export HIL_TFTP_ROOT="/srv/tftp"
 fi
+
+# ========================================
+# Device Network Configuration
+# ========================================
+# IMPORTANT: Update these IPs for your testbed!
+
+# TFTP Server IP (for U-Boot recovery)
+if [ -z "$HIL_TFTP_SERVER_IP" ]; then
+    export HIL_TFTP_SERVER_IP="192.168.20.186"  # ← CAMBIAR AQUÍ
+fi
+
+# Belkin RT3200 #1 (Linksys E8450)
+if [ -z "$HIL_BELKIN1_IP" ]; then
+    export HIL_BELKIN1_IP="192.168.20.182"  # ← CAMBIAR SI ES NECESARIO
+fi
+if [ -z "$HIL_BELKIN1_SERIAL" ]; then
+    export HIL_BELKIN1_SERIAL="/dev/belkin-rt3200-1"
+fi
+if [ -z "$HIL_BELKIN1_RELAY_CHANNEL" ]; then
+    export HIL_BELKIN1_RELAY_CHANNEL="2"
+fi
+
+# Belkin RT3200 #2 (Linksys E8450)
+if [ -z "$HIL_BELKIN2_IP" ]; then
+    export HIL_BELKIN2_IP="192.168.20.183"  # ← CAMBIAR SI ES NECESARIO
+fi
+if [ -z "$HIL_BELKIN2_SERIAL" ]; then
+    export HIL_BELKIN2_SERIAL="/dev/belkin-rt3200-2"
+fi
+if [ -z "$HIL_BELKIN2_RELAY_CHANNEL" ]; then
+    export HIL_BELKIN2_RELAY_CHANNEL="3"
+fi
+
+# GL-iNet MT300N-V2 (Mango)
+if [ -z "$HIL_GLINET_IP" ]; then
+    export HIL_GLINET_IP="192.168.20.181"  # ← CAMBIAR SI ES NECESARIO
+fi
+if [ -z "$HIL_GLINET_SERIAL" ]; then
+    export HIL_GLINET_SERIAL="/dev/glinet-mango"
+fi
+if [ -z "$HIL_GLINET_RELAY_CHANNEL" ]; then
+    export HIL_GLINET_RELAY_CHANNEL="0"
+fi
+if [ -z "$HIL_GLINET_SERIAL_ISOLATOR_CHANNEL" ]; then
+    export HIL_GLINET_SERIAL_ISOLATOR_CHANNEL="1"
+fi
+
+# Arduino Relay Controller
+if [ -z "$HIL_ARDUINO_RELAY_DEVICE" ]; then
+    export HIL_ARDUINO_RELAY_DEVICE="/dev/arduino-relay"
+fi
+if [ -z "$HIL_ARDUINO_RELAY_BAUDRATE" ]; then
+    export HIL_ARDUINO_RELAY_BAUDRATE="115200"
+fi
+
+# ========================================
+# Validation
+# ========================================
 
 # Validate paths
 if [ ! -d "$HIL_UTILS_PATH" ]; then
@@ -50,8 +108,16 @@ fi
 
 # Display configuration
 echo "✓ Hardware-in-the-Loop Environment Configured:"
+echo ""
+echo "Paths:"
 echo "  Workspace: $HIL_WORKSPACE_PATH"
 echo "  Utils:     $HIL_UTILS_PATH"
 echo "  Images:    $HIL_IMAGES_PATH"
-echo "  TFTP:      $HIL_TFTP_ROOT"
-
+echo "  TFTP Root: $HIL_TFTP_ROOT"
+echo ""
+echo "Network:"
+echo "  TFTP Server: $HIL_TFTP_SERVER_IP"
+echo "  Belkin #1:   $HIL_BELKIN1_IP"
+echo "  Belkin #2:   $HIL_BELKIN2_IP"
+echo "  GL-iNet:     $HIL_GLINET_IP"
+echo ""
