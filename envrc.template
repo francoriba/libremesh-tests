@@ -1,0 +1,57 @@
+#!/bin/bash
+# direnv configuration for automatic environment setup
+# ====================================================
+# To use: 
+#   1. Install direnv: https://direnv.net/
+#   2. Copy this to .envrc: cp envrc.template .envrc
+#   3. Allow direnv: direnv allow
+#
+# Or source manually: source envrc.template
+
+# Auto-detect workspace root (where this file is located)
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export HIL_WORKSPACE_PATH="$(cd "$TESTS_DIR/.." && pwd)"
+
+# Auto-detect pi-hil-testing-utils (sibling directory)
+if [ -z "$HIL_UTILS_PATH" ]; then
+    HIL_UTILS_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../pi-hil-testing-utils" 2>/dev/null && pwd)"
+    if [ -d "$HIL_UTILS_CANDIDATE" ]; then
+        export HIL_UTILS_PATH="$HIL_UTILS_CANDIDATE"
+    else
+        export HIL_UTILS_PATH="$HOME/pi/pi-hil-testing-utils"
+    fi
+fi
+
+# Auto-detect images directory (sibling directory)
+if [ -z "$HIL_IMAGES_PATH" ]; then
+    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../images" 2>/dev/null && pwd)"
+    if [ -d "$HIL_IMAGES_CANDIDATE" ]; then
+        export HIL_IMAGES_PATH="$HIL_IMAGES_CANDIDATE"
+    else
+        export HIL_IMAGES_PATH="$HOME/pi/images"
+    fi
+fi
+
+# TFTP root (default system location)
+if [ -z "$HIL_TFTP_ROOT" ]; then
+    export HIL_TFTP_ROOT="/srv/tftp"
+fi
+
+# Validate paths
+if [ ! -d "$HIL_UTILS_PATH" ]; then
+    echo "⚠ WARNING: HIL_UTILS_PATH not found: $HIL_UTILS_PATH"
+    echo "  Set HIL_UTILS_PATH environment variable or fix directory structure"
+fi
+
+if [ ! -d "$HIL_IMAGES_PATH" ]; then
+    echo "⚠ WARNING: HIL_IMAGES_PATH not found: $HIL_IMAGES_PATH"
+    echo "  Set HIL_IMAGES_PATH environment variable or create images directory"
+fi
+
+# Display configuration
+echo "✓ Hardware-in-the-Loop Environment Configured:"
+echo "  Workspace: $HIL_WORKSPACE_PATH"
+echo "  Utils:     $HIL_UTILS_PATH"
+echo "  Images:    $HIL_IMAGES_PATH"
+echo "  TFTP:      $HIL_TFTP_ROOT"
+

@@ -5,3 +5,14 @@ __pycache__
 console_*
 results.json
 alluredir/
+
+# Environment configuration (user-specific)
+.env
+.envrc
+
+# Generated YAML configs (regenerated from templates)
+# Keep the templates (*.yaml.template) in git, but not generated YAMLs
+targets/belkin_rt3200_1.yaml
+targets/belkin_rt3200_2.yaml
+targets/gl-mt300n-v2.yaml
+targets/mesh_testbed.yaml

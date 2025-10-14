@@ -6,17 +6,17 @@ targets:
 
     resources:
       RawSerialPort:
-        port: "/dev/belkin-rt3200-1"
+        port: "${HIL_BELKIN1_SERIAL}"
         speed: 115200
 
       NetworkService:
-        address: "192.168.20.182"
+        address: "${HIL_BELKIN1_IP}"
         username: "root"
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on 2"
-        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off 2"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on ${HIL_BELKIN1_RELAY_CHANNEL}"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off ${HIL_BELKIN1_RELAY_CHANNEL}"
 
       SerialDriver:
         txdelay: 0.01
@@ -39,8 +39,8 @@ targets:
         autoboot: "Press UP/DOWN to move"
         interrupt: "0\n"
         init_commands:
-          - setenv serverip 192.168.20.234
-          - setenv ipaddr 192.168.20.182
+          - setenv serverip ${HIL_TFTP_SERVER_IP}
+          - setenv ipaddr ${HIL_BELKIN1_IP}
           - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
           - tftpboot 0x4007ff28
         boot_command: bootm 0x4007ff28
@@ -77,17 +77,17 @@ targets:
 
     resources:
       RawSerialPort:
-        port: "/dev/belkin-rt3200-2"
+        port: "${HIL_BELKIN2_SERIAL}"
         speed: 115200
 
       NetworkService:
-        address: "192.168.20.183"
+        address: "${HIL_BELKIN2_IP}"
         username: "root"
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on 3"
-        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off 3"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on ${HIL_BELKIN2_RELAY_CHANNEL}"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off ${HIL_BELKIN2_RELAY_CHANNEL}"
 
       SerialDriver:
         txdelay: 0.01
@@ -110,8 +110,8 @@ targets:
         autoboot: "Press UP/DOWN to move"
         interrupt: "0\n"
         init_commands:
-          - setenv serverip 192.168.20.234
-          - setenv ipaddr 192.168.20.183
+          - setenv serverip ${HIL_TFTP_SERVER_IP}
+          - setenv ipaddr ${HIL_BELKIN2_IP}
           - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
           - tftpboot 0x4007ff28
         boot_command: bootm 0x4007ff28
@@ -148,23 +148,23 @@ targets:
 
     resources:
       RawSerialPort:
-        port: "/dev/glinet-mango"
+        port: "${HIL_GLINET_SERIAL}"
         speed: 115200
       
       SerialIsolatorResource:
-        device: "/dev/arduino-relay"
-        channel: 1
-        baudrate: 115200
+        device: "${HIL_ARDUINO_RELAY_DEVICE}"
+        channel: ${HIL_GLINET_SERIAL_ISOLATOR_CHANNEL}
+        baudrate: ${HIL_ARDUINO_RELAY_BAUDRATE}
 
       NetworkService:
-        address: "192.168.20.181"
+        address: "${HIL_GLINET_IP}"
         username: "root"
-        password: "bestpi4ever"
+        # No password - devices are flashed continuously with fresh firmware
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
-        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port ${HIL_ARDUINO_RELAY_DEVICE} --baudrate ${HIL_ARDUINO_RELAY_BAUDRATE} on ${HIL_GLINET_RELAY_CHANNEL}"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port ${HIL_ARDUINO_RELAY_DEVICE} --baudrate ${HIL_ARDUINO_RELAY_BAUDRATE} off ${HIL_GLINET_RELAY_CHANNEL}"
 
       SerialIsolatorDriver: {}
 

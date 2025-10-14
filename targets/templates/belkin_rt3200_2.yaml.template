@@ -5,17 +5,17 @@ targets:
 
     resources:
       RawSerialPort:
-        port: "/dev/belkin-rt3200-2"
+        port: "${HIL_BELKIN2_SERIAL}"
         speed: 115200
 
       NetworkService:
-        address: "192.168.20.183"
+        address: "${HIL_BELKIN2_IP}"
         username: "root"
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on 3"
-        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off 3"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py on ${HIL_BELKIN2_RELAY_CHANNEL}"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py off ${HIL_BELKIN2_RELAY_CHANNEL}"
 
       SerialDriver:
         txdelay: 0.01
@@ -38,8 +38,8 @@ targets:
         autoboot: "Press UP/DOWN to move"
         interrupt: "0\n"
         init_commands:
-          - setenv serverip 192.168.20.234
-          - setenv ipaddr 192.168.20.183
+          - setenv serverip ${HIL_TFTP_SERVER_IP}
+          - setenv ipaddr ${HIL_BELKIN2_IP}
           - setenv bootfile lime-mediatek-mt7622-linksys_e8450-ubi-initramfs-recovery.itb
           - tftpboot 0x4007ff28
         boot_command: bootm 0x4007ff28

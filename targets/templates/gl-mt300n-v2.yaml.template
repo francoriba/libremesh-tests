@@ -5,23 +5,22 @@ targets:
 
     resources:
       RawSerialPort:
-        port: "/dev/glinet-mango"
+        port: "${HIL_GLINET_SERIAL}"
         speed: 115200
       
       SerialIsolatorResource:
-        device: "/dev/arduino-relay"
-        channel: 1
-        baudrate: 115200
+        device: "${HIL_ARDUINO_RELAY_DEVICE}"
+        channel: ${HIL_GLINET_SERIAL_ISOLATOR_CHANNEL}
+        baudrate: ${HIL_ARDUINO_RELAY_BAUDRATE}
 
       NetworkService:
-        address: "192.168.20.181"
+        address: "${HIL_GLINET_IP}"
         username: "root"
-        password: "bestpi4ever"
 
     drivers:
       ExternalPowerDriver:
-        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 on 0"
-        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port /dev/arduino-relay --baudrate 115200 off 0"
+        cmd_on: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port ${HIL_ARDUINO_RELAY_DEVICE} --baudrate ${HIL_ARDUINO_RELAY_BAUDRATE} on ${HIL_GLINET_RELAY_CHANNEL}"
+        cmd_off: "python3 ${HIL_UTILS_PATH}/scripts/arduino_relay_control.py --port ${HIL_ARDUINO_RELAY_DEVICE} --baudrate ${HIL_ARDUINO_RELAY_BAUDRATE} off ${HIL_GLINET_RELAY_CHANNEL}"
 
       SerialIsolatorDriver: {}
 
