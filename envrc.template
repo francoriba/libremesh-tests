@@ -8,88 +8,76 @@
 #
 # Or source manually: source envrc.template
 
+# Clear any existing environment variables to prevent conflicts
+echo "🔄 Resetting HIL environment variables..."
+unset HIL_WORKSPACE_PATH
+unset HIL_UTILS_PATH
+unset HIL_IMAGES_PATH
+unset HIL_TFTP_ROOT
+unset HIL_TFTP_SERVER_IP
+unset HIL_BELKIN1_IP
+unset HIL_BELKIN1_SERIAL
+unset HIL_BELKIN1_RELAY_CHANNEL
+unset HIL_BELKIN2_IP
+unset HIL_BELKIN2_SERIAL
+unset HIL_BELKIN2_RELAY_CHANNEL
+unset HIL_GLINET_IP
+unset HIL_GLINET_SERIAL
+unset HIL_GLINET_RELAY_CHANNEL
+unset HIL_GLINET_SERIAL_ISOLATOR_CHANNEL
+unset HIL_ARDUINO_RELAY_DEVICE
+unset HIL_ARDUINO_RELAY_BAUDRATE
+
 # Auto-detect workspace root (where this file is located)
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export HIL_WORKSPACE_PATH="$(cd "$TESTS_DIR/.." && pwd)"
 
 # Auto-detect pi-hil-testing-utils (sibling directory)
-if [ -z "$HIL_UTILS_PATH" ]; then
-    HIL_UTILS_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../pi-hil-testing-utils" 2>/dev/null && pwd)"
-    if [ -d "$HIL_UTILS_CANDIDATE" ]; then
-        export HIL_UTILS_PATH="$HIL_UTILS_CANDIDATE"
-    else
-        export HIL_UTILS_PATH="$HOME/pi/pi-hil-testing-utils"
-    fi
+HIL_UTILS_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../pi-hil-testing-utils" 2>/dev/null && pwd)"
+if [ -d "$HIL_UTILS_CANDIDATE" ]; then
+    export HIL_UTILS_PATH="$HIL_UTILS_CANDIDATE"
+else
+    export HIL_UTILS_PATH="$HOME/pi/pi-hil-testing-utils"
 fi
 
 # Auto-detect images directory (sibling directory)
-if [ -z "$HIL_IMAGES_PATH" ]; then
-    HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../images" 2>/dev/null && pwd)"
-    if [ -d "$HIL_IMAGES_CANDIDATE" ]; then
-        export HIL_IMAGES_PATH="$HIL_IMAGES_CANDIDATE"
-    else
-        export HIL_IMAGES_PATH="$HOME/pi/images"
-    fi
+HIL_IMAGES_CANDIDATE="$(cd "$HIL_WORKSPACE_PATH/../images" 2>/dev/null && pwd)"
+if [ -d "$HIL_IMAGES_CANDIDATE" ]; then
+    export HIL_IMAGES_PATH="$HIL_IMAGES_CANDIDATE"
+else
+    export HIL_IMAGES_PATH="$HOME/pi/images"
 fi
 
 # TFTP root (default system location)
-if [ -z "$HIL_TFTP_ROOT" ]; then
-    export HIL_TFTP_ROOT="/srv/tftp"
-fi
+export HIL_TFTP_ROOT="/srv/tftp"
 
 # ========================================
 # Device Network Configuration
 # ========================================
-# IMPORTANT: Update these IPs for your testbed!
+# IMPORTANT: Update these values for your testbed host
 
 # TFTP Server IP (for U-Boot recovery)
-if [ -z "$HIL_TFTP_SERVER_IP" ]; then
-    export HIL_TFTP_SERVER_IP="192.168.20.186"  # ← CAMBIAR AQUÍ
-fi
+export HIL_TFTP_SERVER_IP="pleaseChangeMe"
 
 # Belkin RT3200 #1 (Linksys E8450)
-if [ -z "$HIL_BELKIN1_IP" ]; then
-    export HIL_BELKIN1_IP="192.168.20.182"  # ← CAMBIAR SI ES NECESARIO
-fi
-if [ -z "$HIL_BELKIN1_SERIAL" ]; then
-    export HIL_BELKIN1_SERIAL="/dev/belkin-rt3200-1"
-fi
-if [ -z "$HIL_BELKIN1_RELAY_CHANNEL" ]; then
-    export HIL_BELKIN1_RELAY_CHANNEL="2"
-fi
+export HIL_BELKIN1_IP="pleaseChangeMe"
+export HIL_BELKIN1_SERIAL="pleaseChangeMe"
+export HIL_BELKIN1_RELAY_CHANNEL="pleaseChangeMe"
 
 # Belkin RT3200 #2 (Linksys E8450)
-if [ -z "$HIL_BELKIN2_IP" ]; then
-    export HIL_BELKIN2_IP="192.168.20.183"  # ← CAMBIAR SI ES NECESARIO
-fi
-if [ -z "$HIL_BELKIN2_SERIAL" ]; then
-    export HIL_BELKIN2_SERIAL="/dev/belkin-rt3200-2"
-fi
-if [ -z "$HIL_BELKIN2_RELAY_CHANNEL" ]; then
-    export HIL_BELKIN2_RELAY_CHANNEL="3"
-fi
+export HIL_BELKIN2_IP="pleaseChangeMe"
+export HIL_BELKIN2_SERIAL="pleaseChangeMe"
+export HIL_BELKIN2_RELAY_CHANNEL="pleaseChangeMe"
 
 # GL-iNet MT300N-V2 (Mango)
-if [ -z "$HIL_GLINET_IP" ]; then
-    export HIL_GLINET_IP="192.168.20.181"  # ← CAMBIAR SI ES NECESARIO
-fi
-if [ -z "$HIL_GLINET_SERIAL" ]; then
-    export HIL_GLINET_SERIAL="/dev/glinet-mango"
-fi
-if [ -z "$HIL_GLINET_RELAY_CHANNEL" ]; then
-    export HIL_GLINET_RELAY_CHANNEL="0"
-fi
-if [ -z "$HIL_GLINET_SERIAL_ISOLATOR_CHANNEL" ]; then
-    export HIL_GLINET_SERIAL_ISOLATOR_CHANNEL="1"
-fi
+export HIL_GLINET_IP="pleaseChangeMe"
+export HIL_GLINET_SERIAL="pleaseChangeMe"
+export HIL_GLINET_RELAY_CHANNEL="pleaseChangeMe"
+export HIL_GLINET_SERIAL_ISOLATOR_CHANNEL="pleaseChangeMe"
 
 # Arduino Relay Controller
-if [ -z "$HIL_ARDUINO_RELAY_DEVICE" ]; then
-    export HIL_ARDUINO_RELAY_DEVICE="/dev/arduino-relay"
-fi
-if [ -z "$HIL_ARDUINO_RELAY_BAUDRATE" ]; then
-    export HIL_ARDUINO_RELAY_BAUDRATE="115200"
-fi
+export HIL_ARDUINO_RELAY_DEVICE="pleaseChangeMe"
+export HIL_ARDUINO_RELAY_BAUDRATE="115200"
 
 # ========================================
 # Validation
