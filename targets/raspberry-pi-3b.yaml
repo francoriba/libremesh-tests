@@ -2,7 +2,7 @@ targets:
   main:
     resources:
       RemotePlace:
-        name: !template '$LG_PLACE'
+        name: !template "$LG_PLACE"
       NetworkService:
         address: "192.168.1.1"
         port: 22
@@ -20,9 +20,8 @@ targets:
         username: root
       USBSDMuxDriver: {}
       USBStorageDriver:
-        image: 'firmware'
+        image: "firmware"
       ShellStrategy: {}
-      SSHDriver: {}
-
-
-# https://downloads.openwrt.org/snapshots/targets/bcm27xx/bcm2710/openwrt-bcm27xx-bcm2710-rpi-3-squashfs-factory.img.gz
+      SSHDriver:
+        connection_timeout: 120.0
+        explicit_scp_mode: True

@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import enum
-from time import sleep
 
 import attr
-from conftest import ubus_call
 from labgrid import step, target_factory
 from labgrid.strategy import Strategy, StrategyError
 from labgrid.util import get_free_port

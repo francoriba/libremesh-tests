@@ -1,5 +1,8 @@
 targets:
   main:
+    features:
+      - wan_port
+      - wifi
     resources:
       RemotePlace:
         name: !template "$LG_PLACE"
@@ -32,11 +35,11 @@ targets:
         prompt: "ap135>"
         boot_secret: "tpl"
         init_commands:
-          - setenv ipaddr 192.168.1.200
-          - setenv serverip 192.168.1.99
           - tftp 0x82000000
       UBootTFTPStrategy: {}
-      SSHDriver: {}
+      SSHDriver:
+        connection_timeout: 120.0
+        explicit_scp_mode: True
 
 images:
   root: !template $LG_IMAGE

@@ -1,7 +1,9 @@
 labgrid-bastian-cznic_turris-omnia:
   location: bastian-desk
-  RawSerialPort:
-    port: "/dev/ttyUSB0"
+  USBSerialPort:
+    match:
+      ID_SERIAL_SHORT: AI024GU9
+      ID_USB_INTERFACE_NUM: "00"
   NetworkPowerPort:
     model: ubus
     host: "http://192.168.128.2/ubus"
@@ -14,8 +16,10 @@ labgrid-bastian-cznic_turris-omnia:
     username: "root"
 
 labgrid-bastian-tplink_tl-wdr4300-v1:
-  RawSerialPort:
-    port: "/dev/ttyUSB1"
+  USBSerialPort:
+    match:
+      ID_SERIAL_SHORT: AI024KC7
+      ID_USB_INTERFACE_NUM: "00"
   NetworkPowerPort:
     model: ubus
     host: "http://192.168.128.2/ubus"
@@ -23,6 +27,7 @@ labgrid-bastian-tplink_tl-wdr4300-v1:
   TFTPProvider:
     internal: "/srv/tftp/tplink_tl-wdr4300-v1/"
     external: "tplink_tl-wdr4300-v1/"
+    external_ip: "192.168.103.1"
   NetworkService:
     address: "192.168.1.1%vlan103"
     username: "root"

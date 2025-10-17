@@ -7,7 +7,7 @@ targets:
       RemotePlace:
         name: !template "$LG_PLACE"
     drivers:
-      NetworkPowerDriver: {}
+      PDUDaemonDriver: {}
       TFTPProviderDriver: {}
       SerialDriver:
         txdelay: 0.01
@@ -18,11 +18,12 @@ targets:
         login_timeout: 120
         post_login_settle_time: 5
         username: root
-      UBootDriver:
-        prompt: "MT7622>"
+      SmallUBootDriver:
+        boot_expression: "Hit 'gl' to stop autoboot:"
+        prompt: "MT7621 #"
+        boot_secret: "gl"
         init_commands:
-          - dhcp
-        boot_command: bootm $loadaddr#$bootconf
+          - tftp 0x81000000
       UBootTFTPStrategy: {}
       SSHDriver:
         connection_timeout: 120.0

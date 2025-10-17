@@ -2,7 +2,6 @@ targets:
   main:
     features:
       - wan_port
-      - wifi
     resources:
       RemotePlace:
         name: !template "$LG_PLACE"
@@ -13,7 +12,7 @@ targets:
           txdelay: 0.01
       - UBootDriver:
           interrupt: "\\x0"
-          prompt: "OpenWrt One>"
+          prompt: "MT7988>"
           init_commands:
             - dhcp
           boot_command: bootm $loadaddr#$bootconf

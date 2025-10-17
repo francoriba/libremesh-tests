@@ -13,7 +13,7 @@ targets:
           txdelay: 0.01
       - UBootDriver:
           interrupt: "\\x0"
-          prompt: "OpenWrt One>"
+          prompt: "MT7622>"
           init_commands:
             - dhcp
           boot_command: bootm $loadaddr#$bootconf

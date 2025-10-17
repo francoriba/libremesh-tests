@@ -1,37 +1,81 @@
 - hosts: coordinator
+  become: true
   tasks:
+    - name: Create a user account called labgrid-dev
+      user:
+        name: labgrid-dev
+        state: present
+
+    - name: Add SSH keys to labgrid-dev based on labnet.yaml
+      authorized_key:
+        user: labgrid-dev
+        state: present
+        key: "{{ item.value.sshkey }}"
+        comment: "{{ item.key }}"
+      loop: "{{ hostvars[inventory_hostname]['developers'] | dict2items | default([]) }}"
+
     - name: Add labs to /etc/hosts
       lineinfile:
         path: /etc/hosts
         line: "{{ hostvars[item].wireguard_ip }} {{ item }}"
         state: present
       loop: "{{ groups['labs'] }}"
-      become: yes
 
     - name: Create .ssh directory
       file:
-        path: /home/{{ ansible_user }}/.ssh
+        path: /home/labgrid-dev/.ssh
         state: directory
         mode: "0700"
 
     - name: Add .ssh/config
       blockinfile:
-        path: /home/{{ ansible_user }}/.ssh/config
+        path: /home/labgrid-dev/.ssh/config
         block: |
           Host {{ item }}
             HostName {{ hostvars[item].wireguard_ip }}
-            User {{ hostvars[item].ansible_user }}
+            User labgrid-dev
         state: present
         marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item }}"
         create: true
       loop: "{{ groups['labs'] }}"
 
+    - name: Add .ssh/config
+      blockinfile:
+        path: /home/labgrid-dev/.ssh/config
+        block: |
+          Host {{ item }}
+            HostName {{ hostvars[item].wireguard_ip }}
+            User labgrid-dev
+        state: present
+        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item }}"
+        create: true
+      loop: "{{ groups['labs'] }}"
+
+    - name: Add .ssh/config
+      blockinfile:
+        path: /home/{{ ansible_ssh_user }}/.ssh/config
+        block: |
+          Host {{ item }}
+            HostName {{ hostvars[item].wireguard_ip }}
+            User labgrid-dev
+        state: present
+        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item }}"
+        create: true
+      loop: "{{ groups['labs'] }}"
+
+    - name: Install required packages
+      apt:
+        name:
+          - nmap
+        state: present
+        update_cache: yes
+
 - hosts: labs
+  become: yes
   tasks:
     - name: Set hostname
       hostname:
         name: "{{ inventory_hostname }}"
-      become: yes
 
     - name: Set /etc/hosts
       lineinfile:
@@ -39,7 +83,26 @@
         regexp: "^127.0.0.1"
         line: "127.0.0.1 localhost"
         state: present
-      become: yes
+
+    - name: Create a user account called labgrid-dev
+      user:
+        name: labgrid-dev
+        state: present
+        shell: /bin/bash
+        home: /home/labgrid-dev
+        create_home: yes
+        append: true
+        groups:
+          - dialout
+          - plugdev
+
+    - name: Add SSH keys to labgrid-dev based on labnet.yaml
+      authorized_key:
+        user: labgrid-dev
+        state: present
+        key: "{{ hostvars[inventory_hostname]['developers'][item]['sshkey'] }}"
+        comment: "{{ item }}"
+      loop: "{{ hostvars[inventory_hostname]['labs'][inventory_hostname]['developers'] | default([]) }}"
 
     - name: Set /etc/hosts
       lineinfile:
@@ -47,16 +110,15 @@
         regexp: "^127.0.1.1"
         line: "127.0.1.1 {{ inventory_hostname }}"
         state: present
-      become: yes
 
     - name: Add public SSH key of coordinator
       authorized_key:
-        user: "{{ ansible_user }}"
+        user: "labgrid-dev"
         key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP0ZVlD9TmfAXL53Vq7V9WKE3KPomOa1jINyflrPWAlJ"
 
     - name: Generate SSH key pair for labgrid
       community.crypto.openssh_keypair:
-        path: /home/{{ ansible_user }}/.ssh/labgrid
+        path: /home/labgrid-dev/.ssh/labgrid
         type: ed25519
         comment: labgrid
         state: present
@@ -64,7 +126,7 @@
 
     - name: Add public SSH key of labgrid
       authorized_key:
-        user: "{{ ansible_user }}"
+        user: "labgrid-dev"
         key: "{{ labgrid_key.public_key }}"
         state: present
 
@@ -78,49 +140,127 @@
           - socat
           - iptables
           - iptables-persistent
+          - git
+          - pkg-config
+          - libsystemd-dev
+          - build-essential
+          - python3-dev
         state: present
         update_cache: yes
-      become: yes
+
+    - name: Create pipx folder
+      file:
+        path: /opt/pipx/
+        state: directory
+        owner: "root"
+        group: "root"
+        mode: "0755"
 
     - name: Install labgrid packages
       community.general.pipx:
         name: labgrid
-        state: present
+        source: git+https://github.com/aparcar/labgrid.git@aparcar/staging
+        state: latest
+      environment:
+        PIPX_HOME: /opt/pipx/
+        PIPX_BIN_DIR: /usr/local/bin
+      become: true
       notify:
         - Restart labgrid-exporter
         - Restart labgrid-coordinator
+
+    - name: Install usbsdmux packages
+      community.general.pipx:
+        name: usbsdmux
+        state: latest
+      environment:
+        PIPX_HOME: /opt/pipx/
+        PIPX_BIN_DIR: /usr/local/bin
 
     - name: Create labgrid folder
       file:
         path: /etc/labgrid
         state: directory
-      become: yes
 
     - name: Create tftp folder
       file:
         path: /srv/tftp/
         state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        owner: "labgrid-dev"
+        group: "labgrid-dev"
+        recurse: yes
         mode: "0755"
-      become: yes
 
     - name: Create tftp subfolders
       file:
         path: /srv/tftp/{{ item }}
         state: directory
+        owner: "labgrid-dev"
+        group: "labgrid-dev"
         mode: "0755"
-      loop: "{{ lookup('file', '../labnet.yaml') | from_yaml | json_query(json_query_str) | list }}"
-      vars:
-        json_query_str: 'labs."{{ inventory_hostname }}".devices'
+      loop: "{{ hostvars[inventory_hostname]['labs'][inventory_hostname]['devices'] }}"
 
     - name: Copy exporter configuration
       template:
         src: files/exporter/{{ ansible_host }}.yaml
         dest: /etc/labgrid/exporter.yaml
-      become: yes
       notify:
         - Restart labgrid-exporter
+      tags:
+        - export
+
+    - name: Setup pdudaemon
+      block:
+        - name: Install pdudaemon via pipx
+          community.general.pipx:
+            name: pdudaemon
+            source: git+https://github.com/jonasjelonek/pdudaemon.git@main
+            state: latest
+          environment:
+            PIPX_HOME: /opt/pipx/
+            PIPX_BIN_DIR: /usr/local/bin
+          become: true
+
+        - name: Create pdudaemon directory
+          ansible.builtin.file:
+            path: /etc/pdudaemon
+            state: directory
+            mode: 0755
+
+        - name: Deploy pdudaemon systemd unit
+          ansible.builtin.template:
+            src: files/exporter/pdudaemon.service
+            dest: /etc/systemd/system/pdudaemon.service
+
+        - name: Start and enable pdudaemon
+          ansible.builtin.systemd_service:
+            name: pdudaemon
+            state: restarted
+            enabled: yes
+            daemon_reload: yes
+
+        - name: Stat host specific pdudaemon configuration
+          ansible.builtin.stat:
+            path: files/exporter/pdudaemon-{{ ansible_hostname }}.conf
+          register: host_specific_pdudaemon_conf
+          delegate_to: localhost
+          become: false
+
+        - name: Configure pdudaemon using host specific config
+          template:
+            src: files/exporter/pdudaemon-{{ ansible_host }}.conf
+            dest: /etc/pdudaemon/pdudaemon.conf
+          notify:
+            - Restart pdudaemon
+          when: host_specific_pdudaemon_conf.stat.exists
+
+        - name: Otherwise use general config
+          template:
+            src: files/exporter/pdudaemon.conf
+            dest: /etc/pdudaemon/pdudaemon.conf
+          notify:
+            - Restart pdudaemon
+          when: not host_specific_pdudaemon_conf.stat.exists
 
     - name: Install dnsmasq
       apt:
@@ -128,22 +268,43 @@
           - dnsmasq
         state: present
         update_cache: yes
-      become: yes
+
       notify:
         - Restart dnsmasq
+
+    - name: Configure network with netplan
+      block:
+        - name: Stat host specific netplan configuration
+          ansible.builtin.stat:
+            path: files/exporter/netplan-{{ ansible_hostname }}.yaml
+          register: host_specific_netplan_conf
+          delegate_to: localhost
+          become: false
+
+        - name: Configure netplan using host specific config
+          ansible.builtin.template:
+            src: files/exporter/netplan-{{ ansible_host }}.yaml
+            dest: /etc/netplan/labnet.yaml
+          when: host_specific_netplan_conf.stat.exists
+
+        - name: Apply netplan config
+          ansible.builtin.command:
+            cmd: netplan apply
+          become: true
+          when: host_specific_netplan_conf.stat.exists
 
     - name: Stat host specific dnsmasq configuration
       ansible.builtin.stat:
         path: files/exporter/dnsmasq-{{ ansible_hostname }}.conf
       register: host_specific_dnsmasq_conf
       delegate_to: localhost
-      run_once: true
+      become: false
 
     - name: Configure dnsmasq using host specific config
       template:
         src: files/exporter/dnsmasq-{{ ansible_host }}.conf
         dest: /etc/dnsmasq.conf
-      become: yes
+
       notify:
         - Restart dnsmasq
       when: host_specific_dnsmasq_conf.stat.exists
@@ -152,7 +313,6 @@
       template:
         src: files/exporter/dnsmasq.conf
         dest: /etc/dnsmasq.conf
-      become: yes
       notify:
         - Restart dnsmasq
       when: not host_specific_dnsmasq_conf.stat.exists
@@ -162,47 +322,38 @@
         name: dnsmasq
         state: started
         enabled: yes
-      become: yes
 
     - name: Copy labgrid-coordinator.service
       template:
         src: files/coordinator/labgrid-coordinator.service
         dest: /etc/systemd/system/labgrid-coordinator.service
-      become: yes
       notify:
         - Restart labgrid-coordinator
-
-    - name: Create coordinator directory
-      file:
-        path: /home/{{ ansible_user }}/labgrid-coordinator
-        state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: 0755
-      become: yes
 
     - name: Add places.yaml based on labnet.yaml
       template:
         src: files/coordinator/places.yaml.j2
-        dest: /home/{{ ansible_user }}/labgrid-coordinator/places.yaml
-        mode: "0600"
+        dest: /etc/labgrid/places.yaml
+        mode: "0755"
+        owner: labgrid-dev
+        group: labgrid-dev
       vars:
         labnet: "{{ lookup('file', '../labnet.yaml') | from_yaml }}"
       notify:
         - Restart labgrid-coordinator
+      tags:
+        - export
 
     - name: Start and enable labgrid-coordinator
       service:
         name: labgrid-coordinator
         state: started
         enabled: yes
-      become: yes
 
     - name: Copy labgrid-exporter.service
       template:
         src: files/exporter/labgrid-exporter.service
         dest: /etc/systemd/system/labgrid-exporter.service
-      become: yes
       notify:
         - Restart labgrid-exporter
 
@@ -211,30 +362,35 @@
         name: labgrid-exporter
         state: started
         enabled: yes
-      become: yes
 
-    - name: Add developers group to sudoers for labgrid-bound-connect
+    - name: Add labgrid-bound-connect to sudoers
       lineinfile:
         path: /etc/sudoers
         line: "ALL ALL = NOPASSWD: /usr/local/sbin/labgrid-bound-connect"
         validate: "visudo -cf %s"
-      become: yes
 
     - name: Install labgrid-bound-connect
       copy:
         src: files/labgrid-bound-connect
         dest: /usr/local/sbin/labgrid-bound-connect
         mode: "0755"
-      become: yes
 
     - name: Create /var/cache/labgrid
       file:
         path: /var/cache/labgrid
         state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        owner: "labgrid-dev"
+        group: "labgrid-dev"
+        recurse: yes
         mode: "0755"
-      become: yes
+
+    - name: Add cronjob to clean old cache files
+      cron:
+        name: "Clean labgrid cache files older than 7 days"
+        minute: "0"
+        hour: "2"
+        job: "find /var/cache/labgrid -type f -mtime +7 -delete"
+        user: "labgrid-dev"
 
     - name: Enable IP forwarding
       sysctl:
@@ -243,14 +399,21 @@
         state: present
         sysctl_set: yes
         reload: yes
-      become: yes
 
     - name: Make IP forwarding persistent
       copy:
         content: "net.ipv4.ip_forward = 1"
         dest: /etc/sysctl.d/99-ip-forward.conf
         mode: "0644"
-      become: yes
+
+    - name: Add udev rules for USB-SD-Mux
+      copy:
+        src: files/exporter/usbsdmux.rules
+        dest: /etc/udev/rules.d/99-usbsdmux.rules
+        mode: "0644"
+      notify: Reload udev rules
+      tags:
+        - udev
 
   handlers:
     - name: Restart labgrid-exporter
@@ -258,18 +421,24 @@
         daemon_reload: yes
         name: labgrid-exporter
         state: restarted
-      become: yes
 
     - name: Restart labgrid-coordinator
       systemd:
         daemon_reload: yes
         name: labgrid-coordinator
         state: restarted
-      become: yes
+
+    - name: Restart pdudaemon
+      systemd:
+        daemon_reload: yes
+        name: pdudaemon
+        state: restarted
 
     - name: Restart dnsmasq
       systemd:
         daemon_reload: yes
         name: dnsmasq
         state: restarted
-      become: yes
+
+    - name: Reload udev rules
+      command: udevadm control --reload-rules

@@ -24,8 +24,22 @@ config port
 
 config port
 	option enable	'1'
+	option id	'4'
+	option name	'lan4'
+	option poe_plus	'1'
+	option priority	'2'
+
+config port
+	option enable	'1'
 	option id	'5'
 	option name	'lan5'
+	option poe_plus	'1'
+	option priority	'2'
+
+config port
+	option enable	'1'
+	option id	'6'
+	option name	'lan6'
 	option poe_plus	'1'
 	option priority	'2'
 

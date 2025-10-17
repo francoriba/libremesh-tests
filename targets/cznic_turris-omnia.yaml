@@ -1,5 +1,8 @@
 targets:
   main:
+    features:
+      - wan_port
+      - wifi
     resources:
       RemotePlace:
         name: !template "$LG_PLACE"
@@ -25,7 +28,8 @@ targets:
       TFTPProviderDriver: {}
       UBootTFTPStrategy: {}
       SSHDriver:
-        username: root
+        connection_timeout: 120.0
+        explicit_scp_mode: True
 
 images:
   root: !template $LG_IMAGE

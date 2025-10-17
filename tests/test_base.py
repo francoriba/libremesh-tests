@@ -12,12 +12,13 @@ def test_shell(shell_command):
     shell_command.run_check("true")
 
 
-def test_firmware_version(shell_command):
+def test_firmware_version(shell_command, record_property):
+    [actual_version] = shell_command.run_check("source /etc/os-release; echo $BUILD_ID")
+    record_property("firmware_version", actual_version)
+
     if "FIRMWARE_VERSION" in os.environ:
         expected_version = os.environ["FIRMWARE_VERSION"]
-        [actual_version] = shell_command.run_check(
-            "source /etc/os-release; echo $BUILD_ID"
-        )
+        record_property("expected_firmware_version", expected_version)
         assert actual_version == expected_version, (
             f"Firmware version mismatch: expected {expected_version}, got {actual_version}"
         )
@@ -25,12 +26,12 @@ def test_firmware_version(shell_command):
 
 def test_dropbear_startup(shell_command):
     for i in range(120):
-        if shell_command.run("ls /etc/dropbear/dropbear_ed25519_host_key")[2] == 0:
-            break
+        if shell_command.run("ls /etc/dropbear/dropbear_rsa_host_key")[2] == 0:
+            if shell_command.run("netstat -tlpn | grep 0.0.0.0:22")[2] == 0:
+                return
         time.sleep(1)
 
-    time.sleep(1)
-    assert shell_command.run("netstat -tlpn | grep 0.0.0.0:22")[2] == 0
+    assert False, "Dropbear did not start up within 120 seconds"
 
 
 def test_ssh(ssh_command):
@@ -97,18 +98,32 @@ def test_sysupgrade_backup_u(ssh_command):
 
 
 def test_kernel_errors(ssh_command):
-    logread = "\n".join(ssh_command.run_check("logread"))
+    dmesg_output = "\n".join(ssh_command.run_check("dmesg"))
 
     error_patterns = [
-        r"traps:.*general protection",
-        r"segfault at [[:digit:]]+ ip",
-        r"error.*in",
-        r"do_page_fault\(\): sending",
-        r"Unable to handle kernel.*address",
+        r" Oops:",  # don't trigger on "ramoops"
         r"(PC is at |pc : )([^+\[ ]+).*",
-        r"epc\s+:\s+\S+\s+([^+ ]+).*",
+        r"BUG:",
+        r"corruption",
+        r"do_page_fault\(\): sending",
         r"EIP: \[<.*>\] ([^+ ]+).*",
+        r"epc\s+:\s+\S+\s+([^+ ]+).*",
+        r"error.*in",
+        r"hung task",
+        r"Kernel panic",
+        r"Out of memory",
+        r"segfault",
+        r"stack overflow",
+        r"traps:.*general protection",
+        r"Unable to handle kernel",
     ]
 
+    errors_found = []
     for pattern in error_patterns:
-        assert re.search(pattern, logread) is None, f"Found kernel error: {pattern}"
+        matches = re.findall(f".*{pattern}.*", dmesg_output)
+        if matches:
+            errors_found.extend(matches)
+
+    assert not errors_found, (
+        f"Critical errors found in kernel log: {errors_found[:5]}"
+    )  # Show first 5

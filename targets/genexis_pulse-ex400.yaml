@@ -1,10 +1,13 @@
 targets:
   main:
+    features:
+      - wan_port
+      - wifi
     resources:
       RemotePlace:
         name: !template "$LG_PLACE"
     drivers:
-      NetworkPowerDriver: {}
+      PDUDaemonDriver: {}
       TFTPProviderDriver: {}
       SerialDriver:
         txdelay: 0.01
@@ -21,7 +24,9 @@ targets:
           - net_init
         boot_command: dhcp; bootm $loadaddr
       UBootTFTPStrategy: {}
-      SSHDriver: {}
+      SSHDriver:
+        connection_timeout: 120.0
+        explicit_scp_mode: True
 
 images:
   root: !template $LG_IMAGE

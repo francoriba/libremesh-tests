@@ -10,7 +10,9 @@ on:
 env:
   PYTHONUNBUFFERED: "1"
   PYTEST_ADDOPTS: "--color=yes"
-  UPSTREAM_URL: "https://downloads.openwrt.org/snapshots/targets"
+  LG_CONSOLE: "internal"
+  UPSTREAM_URL: "https://mirror-03.infra.openwrt.org/snapshots/targets"
+  LG_FEATURE_APK: "true"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,6 +46,7 @@ jobs:
                     select($devices[.] != null) |
                     {
                       "device": .,
+                      "name": $devices[.].name,
                       "proxy": $labs[$lab].proxy,
                       "target": $devices[.].target,
                       "firmware": $devices[.].firmware
@@ -70,7 +73,11 @@ jobs:
             ))
           ')
 
-          echo "matrix=$(echo "$filtered_matrix" | jq -c '.')" >> $GITHUB_OUTPUT
+          deduplicated_matrix=$(echo "$filtered_matrix" | jq '
+            group_by(.device) | map(.[0])
+          ')
+
+          echo "matrix=$(echo "$deduplicated_matrix" | jq -c '.')" >> $GITHUB_OUTPUT
 
   test-real:
     name: Device ${{ matrix.device }}
@@ -88,22 +95,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Set environment variables
-        run: |
-          export firmware=openwrt-${{ matrix.target }}-${{ matrix.device }}-${{ matrix.firmware }}
-          echo "LG_IMAGE=/tmp/tftp/${{ matrix.device }}/$firmware" >> $GITHUB_ENV
-          echo "LG_PROXY=${{ matrix.proxy }}" >> $GITHUB_ENV
-          echo "FIRMWARE_IMAGE=$firmware" >> $GITHUB_ENV
-
-      - name: Download test firmware
+      - name: Set environment
         env:
           target: ${{ matrix.target }}
         run: |
+          export firmware=openwrt-${{ matrix.target }}-${{ matrix.device }}-${{ matrix.firmware }}
+
           mkdir -p /tmp/tftp/${{ matrix.device }}
-          wget $UPSTREAM_URL/${target/-/\/}/$FIRMWARE_IMAGE \
-            --output-document /tmp/tftp/${{ matrix.device }}/$FIRMWARE_IMAGE
+          wget $UPSTREAM_URL/${target/-/\/}/$firmware \
+            --output-document /tmp/tftp/${{ matrix.device }}/$firmware
+          (cd /tmp/tftp/ && gzip -df ${{ matrix.device }}/$firmware) || true
+
           FIRMWARE_VERSION=$(curl $UPSTREAM_URL/${target/-/\/}/version.buildinfo)
           echo "FIRMWARE_VERSION=$FIRMWARE_VERSION" >> $GITHUB_ENV
+
+          echo "LG_IMAGE=/tmp/tftp/${{ matrix.device }}/${firmware/.gz/}" >> $GITHUB_ENV
+          echo "LG_PROXY=${{ matrix.proxy }}" >> $GITHUB_ENV
 
       - name: Wait for free device
         run: |
@@ -115,8 +122,10 @@ jobs:
 
       - name: Run test
         run: |
+          mkdir -p ${{ matrix.device }}/
           uv run pytest tests/ \
-            --lg-log \
+            --lg-log ${{ matrix.device }}/ \
+            --junitxml=${{ matrix.device }}/report.xml \
             --lg-colored-steps \
             --log-cli-level=CONSOLE \
             --alluredir allure-results
@@ -127,12 +136,12 @@ jobs:
           uv run labgrid-client power off || true
           uv run labgrid-client unlock
 
-      - name: Upload console logs
+      - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: console-${{ matrix.device }}
-          path: console_*
+          name: results-${{ matrix.device }}
+          path: ${{ matrix.device }}/*
 
       - name: Upload allure results
         uses: actions/upload-artifact@v4
@@ -144,6 +153,8 @@ jobs:
   test-qemu:
     name: QEMU ${{ matrix.target }}
     runs-on: ubuntu-latest
+    env:
+      LG_FEATURE_ONLINE: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -168,6 +179,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install \
+            nmap \
             ${{ matrix.dependency }}
 
           echo "LG_ENV=targets/qemu-${{ matrix.target }}.yaml" >> $GITHUB_ENV
@@ -189,19 +201,22 @@ jobs:
           gunzip ${{ matrix.firmware }} || true
           firmware=${{ matrix.firmware }}
 
+          mkdir -p ${{ matrix.target }}
+
           uv run pytest tests/ \
-            --lg-log \
+            --lg-log ${{ matrix.target }}/ \
+            --junitxml=${{ matrix.target }}/report.xml \
             --lg-colored-steps \
             --log-cli-level=CONSOLE \
             --alluredir allure-results \
             --firmware $GITHUB_WORKSPACE/${firmware/.gz/}
 
-      - name: Upload console logs
+      - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: console-${{ matrix.target }}
-          path: console_*
+          name: results-qemu_${{ matrix.target }}
+          path: ${{ matrix.target }}/*
 
       - name: Upload allure results
         uses: actions/upload-artifact@v4
@@ -211,37 +226,52 @@ jobs:
           path: allure-results
 
   allure:
-    name: Deploy Allure Report
+    name: Deploy results page
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - generate-matrix
       - test-real
       - test-qemu
     steps:
-      - name: Download all Allure results
+      - name: Download all results
         uses: actions/download-artifact@v4
         with:
-          path: allure-results
+          path: page/data
 
-      - name: Copy all results in the same folder
-        continue-on-error: true
-        run: cp -fv allure-results/allure-results-*/* allure-results/
-
-      - name: Load test report history
+      - name: Check out repository code
         uses: actions/checkout@v4
-        if: always()
-        continue-on-error: true
         with:
-          ref: gh-pages
-          path: gh-pages
+          depth: 1
+          path: openwrt-tests/
 
-      - name: Build test report
-        uses: simple-elf/allure-report-action@v1.12
-        if: always()
-        with:
-          gh_pages: gh-pages
-          allure_history: allure-history
-          allure_results: allure-results
+      - name: Setup dashboard
+        run: |
+          cp openwrt-tests/contrib/index.html page/index.html
+          echo '${{ needs.generate-matrix.outputs.matrix }}' > page/devices.json
+
+          # Add QEMU targets to devices.json
+          qemu_targets='[
+            {
+              "device": "qemu_malta-be",
+              "name": "QEMU Malta BE",
+              "target": "malta-be",
+              "firmware": "vmlinux-initramfs.elf"
+            },
+            {
+              "device": "qemu_x86-64",
+              "name": "QEMU x86-64",
+              "target": "x86-64",
+              "firmware": "generic-squashfs-combined.img.gz"
+            },
+            {
+              "device": "qemu_armsr-armv8",
+              "name": "QEMU ARMsr ARMv8",
+              "target": "armsr-armv8",
+              "firmware": "generic-initramfs-kernel.bin"
+            }
+          ]'
+          echo "$(jq ". + $qemu_targets" page/devices.json)" > page/devices.json
 
       - name: Publish test report
         uses: peaceiris/actions-gh-pages@v4
@@ -249,4 +279,4 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
-          publish_dir: allure-history
+          publish_dir: page/
