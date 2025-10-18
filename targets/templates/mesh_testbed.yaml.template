@@ -31,7 +31,7 @@ targets:
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: False
+        explicit_scp_mode: False # enable if the host uses OpenSSH (>= 9.0)
 
       # U-Boot driver for recovery
       UBootDriver:
@@ -102,7 +102,7 @@ targets:
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: False
+        explicit_scp_mode: False # enable if the host uses OpenSSH (>= 9.0)
 
       # U-Boot driver for recovery
       UBootDriver:
@@ -181,7 +181,7 @@ targets:
 
       SSHDriver:
         connection_timeout: 30.0
-        explicit_scp_mode: False
+        explicit_scp_mode: False # enable if the host uses OpenSSH (>= 9.0)
 
       SysupgradeDriver:
         keep_config: false
