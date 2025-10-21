@@ -533,7 +533,28 @@ class PhysicalDeviceStrategy(Strategy):
         """Gets LibreMesh-specific network configuration commands."""
         logger.debug("Using LibreMesh network configuration commands")
 
-        commands = [
+        commands = []
+        
+        # For GL-iNet devices, completely disable mesh services to prevent resource exhaustion
+        if self.requires_serial_disconnect:
+            logger.info("GL-iNet device: disabling all mesh services for stable DHCP operation")
+            commands.extend([
+                # Stop and disable all mesh services
+                '/etc/init.d/lime-config stop 2>/dev/null; /etc/init.d/lime-config disable 2>/dev/null; true',
+                '/etc/init.d/alfred stop 2>/dev/null; /etc/init.d/alfred disable 2>/dev/null; true',
+                'killall -9 alfred 2>/dev/null; true',
+                'killall -9 batctl 2>/dev/null; true',
+                # Remove batman interfaces to stop kernel messages
+                'batctl if del bat0 2>/dev/null; true',
+                'ip link set bat0 down 2>/dev/null; true',
+                'ip link del bat0 2>/dev/null; true',
+                # Remove mesh interfaces
+                'for iface in /sys/class/net/wlan*-mesh* /sys/class/net/wlan*-apname; do [ -e "$iface" ] && ip link set $(basename $iface) down 2>/dev/null; done; true',
+                # Brief pause to let services stop
+                'sleep 2',
+            ])
+        
+        commands.extend([
             # Configure LibreMesh UCI to use DHCP
             'uci set lime-defaults.lan.proto=dhcp 2>/dev/null; true',
             'uci -q delete lime-defaults.lan.ipaddr 2>/dev/null; true',
@@ -551,7 +572,7 @@ class PhysicalDeviceStrategy(Strategy):
             # Disable lime-config auto-run to prevent it from overwriting our config on boot
             '/etc/init.d/lime-config disable 2>/dev/null; true',
             'sync',
-        ]
+        ])
 
         if not reboot_after:
             commands.append('/etc/init.d/network restart')
@@ -781,6 +802,26 @@ class PhysicalDeviceStrategy(Strategy):
         serial.sendline("/etc/init.d/lime-config disable 2>/dev/null; true")
         sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
         serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+        
+        # For GL-iNet devices, also stop mesh services to prevent interface flapping
+        if self.requires_serial_disconnect:
+            logger.info("GL-iNet device: stopping mesh services to stabilize network")
+            serial.sendline("/etc/init.d/alfred stop 2>/dev/null; /etc/init.d/alfred disable 2>/dev/null; true")
+            sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+            serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+            
+            serial.sendline("killall -9 alfred batctl 2>/dev/null; true")
+            sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+            serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+            
+            # Remove batman interfaces
+            serial.sendline("batctl if del bat0 2>/dev/null; ip link set bat0 down 2>/dev/null; ip link del bat0 2>/dev/null; true")
+            sleep(Timeouts.SSH_RECOVERY_COMMAND_WAIT)
+            serial.expect('#', timeout=SSHRecoveryConfig.SERIAL_EXPECT_TIMEOUT)
+            
+            # Wait for interfaces to settle
+            logger.info("Waiting for interfaces to stabilize")
+            sleep(3)
     
     def _configure_persistent_dhcp_via_serial(self, serial):
         """Configures UCI for persistent DHCP on LAN interface."""
