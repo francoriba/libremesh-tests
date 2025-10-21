@@ -38,6 +38,57 @@ def test_mesh_basic_connectivity(mesh_routers):
         assert "belkin2_active" in result2[0][0]
         assert "glinet_active" in result3[0][0]
     
+    with allure.step("Esperar convergencia de la red mesh batman-adv"):
+        """
+        LibreMesh usa batman-adv para mesh networking.
+        Necesitamos esperar a que los nodos se descubran y establezcan rutas.
+        """
+        def wait_for_mesh_convergence(routers_dict, max_wait=120, poll_interval=10):
+            """Espera hasta que todos los routers tengan vecinos batman activos."""
+            start_time = time.time()
+            
+            print("\n⏳ Esperando convergencia de batman-adv mesh network...")
+            
+            while (time.time() - start_time) < max_wait:
+                all_ready = True
+                status = {}
+                
+                for name, router in routers_dict.items():
+                    # Contar vecinos batman activos (líneas con 'LiMe_' y 'mesh')
+                    result = router.run("batctl n 2>/dev/null | grep -c 'LiMe_' || echo 0", timeout=10)
+                    try:
+                        neighbor_count = int(result[0][0].strip()) if result[2] == 0 and result[0] else 0
+                    except (ValueError, IndexError):
+                        neighbor_count = 0
+                    
+                    status[name] = neighbor_count
+                    
+                    # Cada router debería ver al menos 1 vecino para formar la malla
+                    if neighbor_count < 1:
+                        all_ready = False
+                
+                elapsed = int(time.time() - start_time)
+                status_str = ", ".join([f"{k}={v} vecinos" for k, v in status.items()])
+                print(f"  [{elapsed}s] Estado: {status_str}")
+                
+                if all_ready:
+                    print(f"✅ Mesh convergida en {elapsed} segundos - Todos los nodos tienen vecinos")
+                    return True
+                
+                if (time.time() - start_time) < max_wait:
+                    time.sleep(poll_interval)
+            
+            print(f"⚠️  Timeout después de {max_wait}s esperando convergencia mesh.")
+            print(f"    Estado final: {status_str}")
+            return False
+        
+        routers = {"Belkin1": belkin1, "Belkin2": belkin2, "GLiNet": glinet}
+        mesh_ready = wait_for_mesh_convergence(routers, max_wait=120, poll_interval=10)
+        
+        # Advertencia si no convergió, pero continuar para obtener más información de debug
+        if not mesh_ready:
+            print("⚠️  Continuando el test para obtener información de debug...")
+    
     with allure.step("Obtener direcciones IP de los 3 routers"):
         # Obtener IP del Belkin 1
         ip1_result = belkin1.run("ip route get 1.1.1.1 | head -1 | awk '{print $7}'", timeout=10)
