@@ -1,4 +1,5 @@
 import enum
+import hashlib
 import ipaddress
 import logging
 import os
@@ -168,6 +169,32 @@ class UBootTFTPStrategy(Strategy):
                 )
                 time.sleep(TFTP_RETRY_INTERVAL)
 
+    def _derive_ethaddr(self):
+        """Return a deterministic locally-administered unicast MAC for this place.
+
+        Some mt7622 Belkin RT3200 units have a degraded/erased factory MTD
+        partition whose MAC region reads all 0xFF. U-Boot then rejects
+        ``ff:ff:ff:ff:ff:ff`` as an illegal address, ARP never resolves and
+        TFTP fails with "ARP Retry count exceeded". Forcing a valid unicast
+        MAC into the U-Boot env before the transfer restores it; Linux still
+        derives its own MAC after boot, so this only affects the TFTP stage.
+
+        The MAC is derived per-place so that nodes sharing VLAN 200 during
+        mesh tests never collide. Override with LG_UBOOT_ETHADDR.
+        """
+        override = os.environ.get("LG_UBOOT_ETHADDR", "").strip()
+        if override:
+            return override
+        place = (
+            os.environ.get("LG_PLACE", "").strip()
+            or getattr(self.target, "name", "")
+            or "labgrid"
+        )
+        digest = hashlib.sha256(place.encode()).digest()
+        # First octet 0x02: locally-administered (bit 1 set), unicast (bit 0 clear).
+        octets = [0x02] + list(digest[:5])
+        return ":".join(f"{b:02x}" for b in octets)
+
     def _resolve_tftp_server_ip(self):
         """Return the TFTP server IP, preferring env override over exporter config."""
         override = os.environ.get("TFTP_SERVER_IP", "").strip()
@@ -194,6 +221,12 @@ class UBootTFTPStrategy(Strategy):
                 f"setenv serverip {tftp_server_ip}",
                 f"setenv ipaddr {tftp_dut_ip}",
             ) + init_commands
+
+        # Force a valid unicast MAC so units with an erased factory MAC
+        # (reads as ff:ff:ff:ff:ff:ff) can still ARP and TFTP. See
+        # _derive_ethaddr for rationale. Opt out with LG_UBOOT_SET_ETHADDR=0.
+        if _read_int_env("LG_UBOOT_SET_ETHADDR", 1):
+            init_commands = (f"setenv ethaddr {self._derive_ethaddr()}",) + init_commands
 
         download_prefixes = ("tftp", "dhcp")
         self.uboot.init_commands = tuple(
