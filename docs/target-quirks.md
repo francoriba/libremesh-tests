@@ -98,7 +98,7 @@ ARP Retry count exceeded; starting again
 
 ARP never resolves and TFTP fails on every attempt. Observed on `belkin_rt3200_1` and `belkin_rt3200_3` after a lab power outage; `belkin_rt3200_2` kept a valid factory MAC and was unaffected.
 
-`tftpstrategy.py` mitigates this by forcing a valid locally-administered unicast MAC into the U-Boot env (`setenv ethaddr`) before the download commands. The MAC is derived deterministically per Labgrid place (`_derive_ethaddr`) so nodes sharing VLAN 200 during mesh tests do not collide. This only affects the TFTP stage; Linux still derives its own MAC after boot. Override with `LG_UBOOT_ETHADDR`, disable with `LG_UBOOT_SET_ETHADDR=0`.
+`tftpstrategy.py` mitigates this by forcing a valid locally-administered unicast MAC into the U-Boot env before the download commands. `ethaddr` is write-once in U-Boot, so a plain `setenv ethaddr` fails with `Can't overwrite "ethaddr"`; the strategy uses the force flag (`setenv -f ethaddr <mac> || true`) to bypass the protection. The MAC is derived deterministically per Labgrid place (`_derive_ethaddr`) so nodes sharing VLAN 200 during mesh tests do not collide. This only affects the TFTP stage; Linux still derives its own MAC after boot. Override with `LG_UBOOT_ETHADDR`, disable with `LG_UBOOT_SET_ETHADDR=0`.
 
 ### Required bootargs
 

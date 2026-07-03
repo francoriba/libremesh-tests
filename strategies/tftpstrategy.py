@@ -225,8 +225,14 @@ class UBootTFTPStrategy(Strategy):
         # Force a valid unicast MAC so units with an erased factory MAC
         # (reads as ff:ff:ff:ff:ff:ff) can still ARP and TFTP. See
         # _derive_ethaddr for rationale. Opt out with LG_UBOOT_SET_ETHADDR=0.
+        #
+        # ethaddr is write-once in U-Boot, so a plain `setenv ethaddr` fails
+        # with `Can't overwrite "ethaddr"`. The `-f` (force) flag bypasses
+        # the protection; `|| true` keeps a valid-MAC unit booting even if a
+        # given U-Boot build rejects the override.
         if _read_int_env("LG_UBOOT_SET_ETHADDR", 1):
-            init_commands = (f"setenv ethaddr {self._derive_ethaddr()}",) + init_commands
+            ethaddr = self._derive_ethaddr()
+            init_commands = (f"setenv -f ethaddr {ethaddr} || true",) + init_commands
 
         download_prefixes = ("tftp", "dhcp")
         self.uboot.init_commands = tuple(
