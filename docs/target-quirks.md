@@ -83,7 +83,22 @@ This target uses `tftpboot` instead of `dhcp` for two reasons:
 
 2. **Factory partition corruption**: Some Belkin RT3200 units that experienced KOD (Kernel of Death) under 24.10 have corrupted `factory` MTD partitions. The nvmem-cells for MAC address resolve to garbage, causing DHCP to fail (no matching reservation in dnsmasq). The 30s BOOTP timeout triggers the hardware watchdog, resetting the device before our boot completes.
 
-With `tftpboot`, U-Boot sends TFTP frames with whatever MAC it has (garbage is fine for outbound) and the server replies based on IP.
+With `tftpboot`, U-Boot replies based on IP, so DHCP reservations are not needed.
+
+### Erased factory MAC (ff:ff:ff:ff:ff:ff)
+
+When a unit's `factory` MTD MAC region is fully erased (all `0xFF`, e.g. after further NAND degradation on a power outage), U-Boot computes `ethaddr = ff:ff:ff:ff:ff:ff`. Unlike a random garbage unicast MAC, the all-ones broadcast address is **rejected** by U-Boot's network stack:
+
+```
+Error: ethernet@1b100000 address ff:ff:ff:ff:ff:ff illegal value
+TFTP from server 192.168.100.1; our IP address is 192.168.100.2
+Loading: *
+ARP Retry count exceeded; starting again
+```
+
+ARP never resolves and TFTP fails on every attempt. Observed on `belkin_rt3200_1` and `belkin_rt3200_3` after a lab power outage; `belkin_rt3200_2` kept a valid factory MAC and was unaffected.
+
+`tftpstrategy.py` mitigates this by forcing a valid locally-administered unicast MAC into the U-Boot env before the download commands. `ethaddr` is write-once in U-Boot, so a plain `setenv ethaddr` fails with `Can't overwrite "ethaddr"`; the strategy uses the force flag (`setenv -f ethaddr <mac> || true`) to bypass the protection. The MAC is derived deterministically per Labgrid place (`_derive_ethaddr`) so nodes sharing VLAN 200 during mesh tests do not collide. This only affects the TFTP stage; Linux still derives its own MAC after boot. Override with `LG_UBOOT_ETHADDR`, disable with `LG_UBOOT_SET_ETHADDR=0`.
 
 ### Required bootargs
 
